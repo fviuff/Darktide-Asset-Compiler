@@ -1,0 +1,19 @@
+Third-party source used by the Darktide asset compiler
+
+The build uses source under third_party/. Full license texts are in licenses/
+and, where supplied upstream, alongside the vendored source.
+
+cgltf 1.15             MIT          https://github.com/jkuhlmann/cgltf
+meshoptimizer 1.2      MIT          https://github.com/zeux/meshoptimizer
+MikkTSpace             zlib         https://github.com/mmikk/MikkTSpace
+DirectXTex May 2026   MIT          https://github.com/microsoft/DirectXTex
+DirectXMath May 2026  MIT          https://github.com/microsoft/DirectXMath
+Basis Universal 2.50  Apache-2.0   https://github.com/BinomialLLC/basis_universal
+Zstandard            BSD-3-Clause https://github.com/facebook/zstd
+Draco 1.5.7           Apache-2.0   https://github.com/google/draco
+libwebp 1.6.0         BSD-style    https://github.com/webmproject/libwebp
+PhysX 4.1.2           BSD-3-Clause https://github.com/NVIDIAGameWorks/PhysX
+
+Basis Universal's NOTICE and bundled license texts are retained in its
+source directory. The installed Darktide Oodle DLL is loaded at runtime on
+Windows and is neither vendored nor distributed with this project.
