@@ -20,7 +20,6 @@ std::vector<std::string> canonical_bone_names(const SkinInfo& skin) {
         while (!seen.insert(name).second) name = base + "_" + std::to_string(suffix++);
         names.push_back(std::move(name));
     }
-    return unit::lower_unique_native_names(names, {}, "bone", "joint_", {},
-                                           unit::NativeNameHashDomain::Id64High32);
+    return unit::lower_unique_native_names(names, {}, "bone", "joint_");
 }
 }

@@ -31,6 +31,11 @@ struct CompilationPlan {
     std::vector<stingray::DirectEventTransition> state_machine_transitions;
     std::vector<stingray::DirectEventVariable> state_machine_variables;
     std::vector<stingray::DirectEventSelector> state_machine_selectors;
+    // Dangling bones or a ragdoll event without an authored state machine: emit a
+    // state over a generated rest-pose clip so the machine has something to run.
+    bool rest_state = false;
+    // Adds a ragdoll state entered on this event from every other state.
+    std::string ragdoll_event;
     // Indices into the unchanged scene animation array, preserving native identities.
     std::vector<std::size_t> animation_indices;
     std::vector<std::string> gaps;

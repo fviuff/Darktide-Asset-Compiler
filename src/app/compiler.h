@@ -79,6 +79,10 @@ struct CompileOptions {
     std::vector<StateMachineStateOption> state_machine_states;
     std::vector<StateMachineVariableOption> state_machine_variables;
     std::vector<StateMachineTransitionOption> state_machine_transitions;
+    // Event that switches the unit from animation to ragdoll: its dynamic node bodies
+    // are not created at spawn; a state-machine ragdoll state creates and releases them.
+    std::string ragdoll_event;
+    bool in_place = false; // remove root travel from clips (processing/root_motion.h)
 };
 int compile(const CompileOptions& options);
 }

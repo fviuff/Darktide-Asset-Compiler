@@ -3,11 +3,15 @@
 #include "app/source_inspection.h"
 #include "validation/unit_validator.h"
 #include "stingray/texture/texture_writer.h"
+#include "stingray/cooked_resource.h"
+#include "stingray/particles/particles_resource.h"
 #include "third_party_licenses.h"
 #include <charconv>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <string>
 #ifdef _WIN32
@@ -24,14 +28,15 @@ static void usage() {
         "Usage:\n"
         "  DarktideGLBCompiler <input.glb|input.gltf> [--inspect] [-o output_dir] [--asset-path PATH] [--output-kind all|model|animations] [--scene INDEX] [--clip INDEX] [--simple-clip INDEX|--no-simple-animation] [--loop-clip INDEX|--once-clip INDEX] [--sm-state NAME CLIP_INDEX loop|once]... [--sm-variable NAME INITIAL MIN MAX]... [--sm-transition FROM_INDEX TO_INDEX EVENT_NAME BLEND_SECONDS]... [--sm-range-transition FROM_INDEX TO_INDEX EVENT_NAME BLEND_SECONDS VARIABLE_INDEX LOWER UPPER inclusive|exclusive inclusive|exclusive]... [--material-variant NAME] [--scale FACTOR] [--animation-translation-tolerance VALUE] [--animation-scale-tolerance VALUE] [--animation-rotation-tolerance-radians VALUE] [--animation-max-controls COUNT] [--animation-max-refinements COUNT] [--animation-max-evaluations COUNT] [--material RESOURCE_PATH] [--reference-bones FILE.bones --skeleton-resource RESOURCE_PATH] [--physics-shape geometry|convex|box|sphere|capsule] [--physics-actor static|dynamic|keyframed] [--physics-mass KG] [--physics-material default|iron|rubber] [--no-materials] [--no-images] [--no-physics] [--no-validate]\n"
         "  DarktideGLBCompiler --validate <file.unit>\n"
+        "  DarktideGLBCompiler --particles <file.particles> [out.json]   (a particle effect as its JSON description)\n"
+        "  DarktideGLBCompiler --particles-schema   (the particle components and their fields, as JSON)\n"
         "  DarktideGLBCompiler --configure-oodle <game directory or oo2core_9_win64.dll>\n"
         "  DarktideGLBCompiler --capabilities\n\n"
         "  DarktideGLBCompiler --licenses\n\n"
         "--inspect reads and summarizes source content without compiling or writing output; only --scene may be combined with it.\n"
-        "The compiler inventories source features, preserves evidenced mappings, and records deterministic\n"
-        "canonicalizations when no exact mapping exists. Supported skinned inputs produce UNIT+BONES+ANIMATION\n"
-        "resources and a patcher-facing dependency graph. Core opaque PBR materials produce owned MATERIAL and\n"
-        "kind-1 Oodle-compressed TEXTURE resources for the separate install-time patcher.\n"
+        "The compiler converts what has a direct Darktide equivalent and records every approximation it makes\n"
+        "in build.log and compile_manifest.json. Output is UNIT, BONES, ANIMATION, STATE_MACHINE, MATERIAL and\n"
+        "TEXTURE resources plus a build.json for the Custom Assets patcher.\n"
         "--output-kind selects a resource closure; all is the default. Model excludes animation clips;\n"
         "animations emits clips and their BONES dependency without model/material resources.\n"
         "--material explicitly records an existing Darktide material resource as an approximation for GLB materials.\n"
@@ -41,6 +46,10 @@ static void usage() {
         "--loop-clip emits a minimal looping STATE_MACHINE for an emitted clip in all-output mode.\n"
         "--once-clip emits a minimal one-shot STATE_MACHINE for an emitted clip in all-output mode.\n"
         "--sm-state and --sm-transition author direct-event STATE_MACHINE states and transitions in all-output mode.\n"
+        "--in-place removes the horizontal root travel from every clip so walk/run cycles loop on the spot;\n"
+        "build.log notes each clip's speed for moving the unit from Lua.\n"
+        "--ragdoll-event NAME adds a ragdoll state entered on NAME from every state; dynamic node bodies stay\n"
+        "uncreated until then (retail minion ragdoll setup).\n"
         "--scale uniformly converts all spatial data before Stingray coordinate conversion (1 keeps glTF units).\n"
         "--asset-path sets a stable extensionless resource identity, e.g. content/mods/my_mod/trolley.\n"
         "It also names generated dependencies; keep one asset build per output directory.\n"
@@ -74,6 +83,33 @@ static void capabilities() {
                  "\"material_rules\":{\"automatic\":\"convert each glTF material and its referenced textures\",\"external\":\"bind every mesh slot to an existing Darktide material resource\",\"none\":\"emit geometry without material resources\"},"
                  "\"scale_presets\":[\"1\",\"0.1\",\"0.01\",\"0.001\"],"
                  "\"external_material_presets\":[\"content/parent_materials/substance_basic\",\"content/parent_materials/substance_basic_transparent\"]}\n";
+}
+
+// A particles resource as its JSON description (stdout or a file); the description is written back to binary
+// and must give the same bytes.
+static bool particles_description(const fs::path& input, const fs::path& output, std::string& error) {
+    std::ifstream file(input, std::ios::binary);
+    const std::vector<std::uint8_t> blob((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    std::vector<std::uint8_t> body, again;
+    std::string stream;
+    dtglb::json::Value effect;
+    if (!file.good() && !file.eof()) { error = "cannot read the file"; return false; }
+    if (!dtglb::stingray::parse_cooked_resource_envelope(blob, "particles", body, stream, error) ||
+        !dtglb::stingray::particles::decode(body, effect, error)) return false;
+    if (!dtglb::stingray::particles::encode(effect, again, error)) { error = "description does not encode: " + error; return false; }
+    if (again != body) {
+        std::size_t at = 0;
+        while (at < again.size() && at < body.size() && again[at] == body[at]) ++at;
+        error = "description encodes to different bytes (first difference at byte " + std::to_string(at) + ", " +
+            std::to_string(again.size()) + " bytes instead of " + std::to_string(body.size()) + ")";
+        return false;
+    }
+    const auto text = dtglb::json::dump(effect) + "\n";
+    if (output.empty()) { std::cout << text; return true; }
+    std::ofstream out(output, std::ios::binary);
+    out << text;
+    if (!out) { error = "cannot write " + output.string(); return false; }
+    return true;
 }
 
 static bool parse_finite_float(const std::string& value, float& result, bool allow_zero) {
@@ -161,6 +197,20 @@ int main(int argc, char** argv) {
         const bool ok = dtglb::validation::validate_unit_v115(argv[2], report);
         std::cout << report << "\n";
         return ok ? 0 : 2;
+    }
+    if (std::string(argv[1]) == "--particles-schema") {
+        if (argc != 2) { usage(); return 1; }
+        std::cout << dtglb::json::dump(dtglb::stingray::particles::schema()) << '\n';
+        return 0;
+    }
+    if (std::string(argv[1]) == "--particles") {
+        if (argc < 3 || argc > 4) { usage(); return 1; }
+        std::string error;
+        if (!particles_description(fs::path(argv[2]), argc == 4 ? fs::path(argv[3]) : fs::path(), error)) {
+            std::cerr << argv[2] << ": " << error << '\n';
+            return 2;
+        }
+        return 0;
     }
 
     dtglb::app::CompileOptions opt;
@@ -318,6 +368,11 @@ int main(int argc, char** argv) {
             opt.simple_clip_index = index;
         }
         else if (a == "--no-simple-animation") { opt.simple_animation = false; }
+        else if (a == "--in-place") { opt.in_place = true; }
+        else if (a == "--ragdoll-event") {
+            if (i + 1 >= argc || !*argv[i + 1]) { std::cerr << "--ragdoll-event requires an event name\n"; return 1; }
+            opt.ragdoll_event = argv[++i];
+        }
         else if (a == "--once-clip") {
             if (i + 1 >= argc) { std::cerr << "Missing one-shot clip index\n"; return 1; }
             int index = 0;

@@ -4,7 +4,7 @@
 
 namespace dtglb::stingray::material {
 
-// Bounded native child profile evidenced by the fluorescent material sample.
+// Child material layout of the game's fluorescent emissive material.
 struct EmissiveProfileSpec {
     float intensity = 1.0f;
     float multiplier = 1.0f;

@@ -17,6 +17,8 @@ from mathutils import Matrix, Vector
 from bpy.props import BoolProperty, CollectionProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty, StringProperty
 from .reference_skeleton import ReferenceSkeletonError, load_reference, _murmur64
 from . import fit_skeleton
+from . import game_unit
+from . import particle_effect
 
 
 SCHEMA_KEY = "darktide_asset"
@@ -109,12 +111,25 @@ def _skeleton_preset_changed(self, context):
         self.skeleton_preset_status = str(exc)
 
 
+def _default_game_folder():
+    for root in (r"C:\Program Files (x86)\Steam\steamapps\common\Warhammer 40,000 DARKTIDE",
+                 os.path.expanduser("~/.local/share/Steam/steamapps/common/Warhammer 40,000 DARKTIDE")):
+        if os.path.isdir(os.path.join(root, "bundle")):
+            return root
+    return ""
+
+
 class DarktideSceneSettings(bpy.types.PropertyGroup):
+    game_folder: StringProperty(name="Darktide folder", subtype="DIR_PATH", default=_default_game_folder(),
+                                description="Game install folder (holds bundle/); game shaders are read from it")
     game_extract_folder: StringProperty(name="Game extract folder", subtype="DIR_PATH",
                                         description="Directory of limn-extracted <16hex>.<ext> files, used by skeleton presets")
+    game_unit: StringProperty(name="Game unit",
+                              description="Resource path of a game unit whose nodes you need (attach, effect and animated "
+                                          "nodes): a piece of gear, a weapon part, a prop, a character")
     only_weighted_bones: BoolProperty(
         name="Only weighted bones (gear)",
-        description="Export only bones carrying vertex weights plus their ancestors (retail-gear style subset skeleton)",
+        description="Export only bones carrying vertex weights plus their ancestors (a subset skeleton, like the game's own gear)",
         default=False,
     )
     actor: EnumProperty(name="Body behavior", items=ACTOR_ITEMS, default="static")
@@ -144,6 +159,17 @@ class DarktideSceneSettings(bpy.types.PropertyGroup):
         default=True,
     )
     simple_animation_clip: IntProperty(name="Simple animation clip", default=0, min=0)
+    in_place: BoolProperty(
+        name="In place",
+        description="Remove the forward travel walk/run clips carry in their root bone so they loop on the spot. "
+                    "build.log lists each clip's speed for moving the unit from your mod",
+        default=False,
+    )
+    ragdoll_event: StringProperty(
+        name="Ragdoll event",
+        description="Animation event that turns the rig into a ragdoll (Unit.animation_event(unit, name)). "
+                    "Dynamic bodies on the rig's bones stay switched off until then",
+    )
     auto_loop_single_clip: BoolProperty(
         name="Auto-loop single-clip assets",
         description="Create a looping state machine when the exported GLB contains exactly one animation clip",
@@ -194,7 +220,7 @@ class DarktideCollectionSettings(bpy.types.PropertyGroup):
     fit_report: StringProperty(name="Last fit report", default="")
     only_weighted_bones: BoolProperty(
         name="Only weighted bones (gear)",
-        description="Export only bones carrying vertex weights plus their ancestors (retail-gear style subset skeleton)",
+        description="Export only bones carrying vertex weights plus their ancestors (a subset skeleton, like the game's own gear)",
         default=False,
     )
     owned_by_addon: BoolProperty(name="Darktide asset collection", default=False, options={"HIDDEN"})
@@ -222,6 +248,17 @@ class DarktideCollectionSettings(bpy.types.PropertyGroup):
         default=True,
     )
     simple_animation_clip: IntProperty(name="Simple animation clip", default=0, min=0)
+    in_place: BoolProperty(
+        name="In place",
+        description="Remove the forward travel walk/run clips carry in their root bone so they loop on the spot. "
+                    "build.log lists each clip's speed for moving the unit from your mod",
+        default=False,
+    )
+    ragdoll_event: StringProperty(
+        name="Ragdoll event",
+        description="Animation event that turns the rig into a ragdoll (Unit.animation_event(unit, name)). "
+                    "Dynamic bodies on the rig's bones stay switched off until then",
+    )
     auto_loop_single_clip: BoolProperty(
         name="Auto-loop single-clip assets",
         description="Create a looping state machine when the exported GLB contains exactly one animation clip",
@@ -252,12 +289,59 @@ class DarktideCollectionSettings(bpy.types.PropertyGroup):
     inspection_summary: StringProperty(name="Last source inspection", default="")
 
 
+_GAME_SHADERS = None
+
+
+def _game_shaders():
+    """The game's own shaders offered in the Game shader list (game_shaders.json)."""
+    global _GAME_SHADERS
+    if _GAME_SHADERS is None:
+        try:
+            with open(os.path.join(os.path.dirname(__file__), "game_shaders.json"), encoding="utf-8") as handle:
+                _GAME_SHADERS = {preset["id"]: preset for preset in json.load(handle)["presets"]}
+        except (OSError, ValueError, KeyError):
+            _GAME_SHADERS = {}
+    return _GAME_SHADERS
+
+
+def _game_shader_items(self, context):
+    return [(key, preset["label"], preset["shader"]) for key, preset in _game_shaders().items()] or [("", "None", "")]
+
+
+def _parse_assignments(text, what):
+    """'name=1,0.5,0; other=2' -> {name: [floats]} (what='numbers') or {name: word} (what='words')."""
+    result = {}
+    for part in text.replace("\n", ";").split(";"):
+        if not part.strip():
+            continue
+        if "=" not in part:
+            raise ValueError("Expected name=value in '" + part.strip() + "'")
+        name, value = (item.strip() for item in part.split("=", 1))
+        if what == "numbers":
+            numbers = [float(item) for item in value.replace(" ", ",").split(",") if item.strip()]
+            if not 1 <= len(numbers) <= 4 or not all(math.isfinite(number) for number in numbers):
+                raise ValueError("'" + name + "' needs 1 to 4 finite numbers")
+            result[name] = numbers[0] if len(numbers) == 1 else numbers
+        else:
+            if value not in ("base_color", "normal", "orm", "emissive"):
+                raise ValueError("Texture channel '" + name + "' must map to base_color, normal, orm or emissive")
+            result[name] = value
+    return result
+
+
 class DarktideMaterialSettings(bpy.types.PropertyGroup):
     mode: EnumProperty(name="Material intent", default="generated", items=[
         ("generated", "Generated from glTF PBR", "Build a Darktide material from this material's glTF PBR values"),
         ("external", "Use external material", "Bind an existing native Darktide material resource"),
-        ("donor", "Experimental world material donor", "Preserve a v61 world surface blend material; UNIT renderer pairing awaits game validation"),
+        ("donor", "World blend material", "Reuse one of the game's world surface blend materials from its .stream file, with your blend values"),
+        ("game_shader", "Game shader", "Use one of the game's own shaders (glass, water, hologram, glow, fur...) with your values"),
     ])
+    game_shader: EnumProperty(name="Shader", items=_game_shader_items,
+                              description="Game shader to copy; its settings and texture channels are listed below")
+    shader_values: StringProperty(name="Values", description="Variables to change, e.g. color=1,0.2,0.1; opacity=0.8")
+    shader_textures: StringProperty(name="Textures",
+                                    description="Texture channels to fill from this material's glTF images, "
+                                                "e.g. bca=base_color; nm=normal (others: orm, emissive)")
     resource: StringProperty(name="Material resource", description="Native material resource identity, e.g. content/mods/my_mod/materials/paint")
     donor_stream: StringProperty(name="Donor stream", description="Native v61 .streamdata or .stream material file", subtype="FILE_PATH")
     override_nm_r_blend: BoolProperty(name="Override nm_r_blend", default=False)
@@ -276,6 +360,29 @@ class DarktideMaterialSettings(bpy.types.PropertyGroup):
         ("bone", "Bone", "Bone surface context"),
         ("plastic", "Plastic", "Plastic surface context"),
     ])
+
+
+class DarktideDangleSettings(bpy.types.PropertyGroup):
+    enabled: BoolProperty(name="Dangle", default=False,
+                          description="Let this bone swing freely under gravity in game (pendulum). "
+                                      "The unit gets a state machine; mods start it with Unit.enable_animation_state_machine")
+    length: FloatProperty(name="Length", default=0.0, min=0.0, subtype="DISTANCE",
+                          description="Pendulum length; 0 uses the distance to the child bone, or this bone's length")
+    mass: FloatProperty(name="Mass", default=1.0, min=0.001)
+    gravity: FloatProperty(name="Gravity", default=9.82)
+    damping: FloatProperty(name="Damping", default=3.0, min=0.0, description="Higher settles faster")
+    stiffness: FloatProperty(name="Stiffness", default=0.0, min=0.0,
+                             description="Pull back toward the bone's rest direction; 0 hangs freely")
+    max_angle: FloatProperty(name="Max angle", default=0.0, min=0.0, max=180.0,
+                             description="Swing limit in degrees from the rest direction; 0 is unlimited")
+    mode: EnumProperty(name="Mode", default="swing", items=[
+        ("swing", "Swing", "Pendulum: the bone swings around its head (straps, cables, tassels)"),
+        ("jiggle", "Jiggle", "Spring: the bone's position bounces behind its animated position (pouches, bellies)"),
+    ])
+    jiggle_stiffness: FloatProperty(name="Stiffness", default=1000.0, min=0.0, description="Spring strength")
+    jiggle_damping: FloatProperty(name="Damping", default=400.0, min=0.0, description="Higher settles faster")
+    max_stretch: FloatProperty(name="Max stretch", default=0.1, min=0.001, subtype="DISTANCE",
+                               description="How far the bone may lag behind its animated position")
 
 
 class DarktideColliderSettings(bpy.types.PropertyGroup):
@@ -304,6 +411,11 @@ class DarktideColliderSettings(bpy.types.PropertyGroup):
         name="Use as asset collision",
         description="When the asset uses visible mesh collision, include this mesh as a collider",
         default=True,
+    )
+    visibility_group: StringProperty(
+        name="Visibility group",
+        description="Name of a group this object's meshes (and all meshes below it) belong to; "
+                    "toggle in game with Unit.set_visibility(unit, name, visible)",
     )
 
 
@@ -379,7 +491,7 @@ _COLLECTION_OPTIONS = ("actor", "mass", "material", "visible_meshes_collide",
                        "asset_filename", "scale", "output_kind", "select_clip", "clip_index",
                        "embed_simple_animation", "simple_animation_clip", "auto_loop_single_clip",
                        "create_looping_state_machine", "loop_clip_index", "state_machine_playback",
-                       "create_state_graph",
+                       "create_state_graph", "ragdoll_event", "in_place",
                        "animation_translation_tolerance", "animation_scale_tolerance",
                        "animation_rotation_tolerance_radians", "animation_fit_advanced",
                        "only_weighted_bones")
@@ -504,6 +616,7 @@ def _collider_objects(objects, include_visible=False):
 
 def _authored_objects(objects, include_visible=False):
     return [o for o in objects if o.dt_collider.is_body or o.dt_collider.joint_kind != "none" or
+            o.dt_collider.visibility_group.strip() or (o.type == "EMPTY" and o.dt_particles.enabled) or
             (o.type == "MESH" and _collider_role(o, include_visible) != "render")]
 
 
@@ -590,6 +703,8 @@ def _v2_object_extras(obj, include_visible=False):
             if settings.hinge_limits:
                 joint.update({"twist_min": settings.twist_min, "twist_max": settings.twist_max})
         result["joint"] = joint
+    if settings.visibility_group.strip():
+        result["visibility_group"] = settings.visibility_group.strip()
     return result
 
 
@@ -813,6 +928,15 @@ def export_asset(context, path, donor_path_converter=None):
     for material in materials:
         if material.dt_material.mode == "external":
             _validate_material_resource(material.dt_material.resource, material.name)
+        elif material.dt_material.mode == "game_shader":
+            preset = _game_shaders().get(material.dt_material.game_shader)
+            if not preset:
+                raise ValueError("Material " + material.name + " needs a game shader")
+            stream = os.path.join(bpy.path.abspath(scene.dt_asset.game_folder), "bundle", *preset["stream"].split("/"))
+            if not os.path.isfile(stream):
+                raise ValueError("Game shader stream not found (set the Darktide folder): " + stream)
+            _parse_assignments(material.dt_material.shader_values, "numbers")
+            _parse_assignments(material.dt_material.shader_textures, "words")
         elif material.dt_material.mode == "donor":
             donor_path = os.path.abspath(bpy.path.abspath(material.dt_material.donor_stream)) if material.dt_material.donor_stream else ""
             if not donor_path or not os.path.isfile(donor_path):
@@ -833,6 +957,7 @@ def export_asset(context, path, donor_path_converter=None):
     changed_objects = []
     changed_materials = []
     changed_bones = []
+    changed_bone_extras = []
     original_selection = [obj for obj in view_objects if obj.select_get()]
     original_active = context.view_layer.objects.active
     try:
@@ -862,6 +987,36 @@ def export_asset(context, path, donor_path_converter=None):
                 obj[SCHEMA_KEY] = _v2_object_extras(obj, include_visible)
             elif obj in colliders:
                 obj[SCHEMA_KEY] = _object_extras(obj, include_visible)
+            elif obj in authored:  # visibility group only
+                obj[SCHEMA_KEY] = {"version": 1, "id": obj.dt_collider.stable_id}
+            group = obj.dt_collider.visibility_group.strip()
+            if group and not version2:
+                obj[SCHEMA_KEY]["visibility_group"] = group
+            if obj.type == "EMPTY" and obj.dt_particles.enabled:
+                extract = os.path.abspath(bpy.path.abspath(scene.dt_asset.game_extract_folder.strip()))
+                if not scene.dt_asset.game_extract_folder.strip() or not os.path.isdir(extract):
+                    raise ValueError("Particle effects need 'Game extract folder' set to your limn extract")
+                obj[SCHEMA_KEY]["particles"] = particle_effect.node_extras(
+                    obj, extract, donor_path_converter or (lambda value: value))
+        for obj in objects:
+            if obj.type != "ARMATURE":
+                continue
+            for bone in obj.data.bones:
+                if not bone.dt_dangle.enabled:
+                    continue
+                had_original = SCHEMA_KEY in bone
+                original = _copy_idproperty(bone[SCHEMA_KEY]) if had_original else None
+                changed_bone_extras.append((bone, original, had_original))
+                dangle = bone.dt_dangle
+                if dangle.mode == "jiggle":
+                    record = {"mode": "jiggle", "mass": dangle.mass, "gravity": dangle.gravity,
+                              "stiffness": dangle.jiggle_stiffness, "damping": dangle.jiggle_damping,
+                              "max_stretch": dangle.max_stretch}
+                else:
+                    record = {"mass": dangle.mass, "gravity": dangle.gravity, "damping": dangle.damping,
+                              "stiffness": dangle.stiffness, "max_angle": dangle.max_angle,
+                              "length": dangle.length if dangle.length > 0.0 else bone.length}
+                bone[SCHEMA_KEY] = {"version": 1, "id": "dangle:" + obj.name + ":" + bone.name, "dangle": record}
         for material in materials:
             had_original = MATERIAL_SCHEMA_KEY in material
             original = _copy_idproperty(material[MATERIAL_SCHEMA_KEY]) if had_original else None
@@ -872,6 +1027,18 @@ def export_asset(context, path, donor_path_converter=None):
                     "version": 1,
                     "mode": "external",
                     "resource": _validate_material_resource(material.dt_material.resource, material.name),
+                }
+            elif material.dt_material.mode == "game_shader":
+                preset = _game_shaders()[material.dt_material.game_shader]
+                material[MATERIAL_SCHEMA_KEY] = {
+                    "version": 1,
+                    "mode": "game_shader",
+                    "stream": (donor_path_converter or (lambda value: value))(os.path.join(
+                        os.path.abspath(bpy.path.abspath(scene.dt_asset.game_folder)), "bundle", *preset["stream"].split("/"))),
+                    "variables": _parse_assignments(material.dt_material.shader_values, "numbers"),
+                    "textures": _parse_assignments(material.dt_material.shader_textures, "words"),
+                    # the materials holding the compiled shaders; the compiler ships copies of them
+                    "shader_streams": preset.get("shader_streams", {}),
                 }
             elif material.dt_material.mode == "donor":
                 settings = material.dt_material
@@ -916,6 +1083,7 @@ def export_asset(context, path, donor_path_converter=None):
         _set_required(kwargs, operator, "use_selection", True)
         _set_required(kwargs, operator, "export_extras", True)
         _set_required(kwargs, operator, "export_apply", apply_modifiers)
+        _set_if_supported(kwargs, operator, "export_lights", True)  # point/spot lamps become unit lights
         _set_if_supported(kwargs, operator, "export_tangents", True)
         _set_if_supported(kwargs, operator, "export_all_influences", True)
         _set_if_supported(kwargs, operator, "will_save_settings", False)
@@ -935,6 +1103,11 @@ def export_asset(context, path, donor_path_converter=None):
                 obj[SCHEMA_KEY] = original
         for bone in changed_bones:
             bone.use_deform = True
+        for bone, original, had_original in changed_bone_extras:
+            if not had_original:
+                bone.pop(SCHEMA_KEY, None)
+            else:
+                bone[SCHEMA_KEY] = original
         for material, original, had_original in changed_materials:
             if not had_original:
                 material.pop(MATERIAL_SCHEMA_KEY, None)
@@ -1075,6 +1248,10 @@ class DARKTIDE_OT_build(bpy.types.Operator):
                 command.append("--no-simple-animation")
             elif not uses_state_machine and options.output_kind == "all" and options.simple_animation_clip:
                 command.extend(["--simple-clip", str(options.simple_animation_clip)])
+            if options.ragdoll_event.strip() and options.output_kind == "all":
+                command.extend(["--ragdoll-event", options.ragdoll_event.strip()])
+            if options.in_place and options.output_kind != "model":
+                command.append("--in-place")
             if options.create_state_graph:
                 for state in options.state_graph_states:
                     command.extend(["--sm-state", state.state_name.strip(), str(state.clip_index), state.playback])
@@ -1139,6 +1316,36 @@ class DARKTIDE_OT_build(bpy.types.Operator):
             return {"CANCELLED"}
 
 
+class DARKTIDE_OT_import_game_unit(bpy.types.Operator):
+    bl_idname = "darktide.import_game_unit"
+    bl_label = "Import Game Unit Nodes"
+    bl_description = ("Add the attach points, effect points and animated nodes of a game unit as named empties, "
+                      "placed where the game has them")
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        settings = context.scene.dt_asset
+        folder = bpy.path.abspath(settings.game_extract_folder.strip())
+        resource = settings.game_unit.strip().lower()
+        if not folder or not os.path.isdir(folder):
+            self.report({"ERROR"}, "Set 'Game extract folder' to your limn extract first")
+            return {"CANCELLED"}
+        if not resource:
+            self.report({"ERROR"}, "Type the game unit's resource path")
+            return {"CANCELLED"}
+        collection = settings.asset_collection
+        if collection is None:
+            collection = _new_asset_collection(context, set())
+        try:
+            count, unknown = game_unit.import_nodes(context, collection, folder, resource)
+        except (OSError, ReferenceSkeletonError, ValueError) as exc:
+            self.report({"ERROR"}, str(exc)[:200])
+            return {"CANCELLED"}
+        note = (", " + str(unknown) + " only known by hash (#...), keep those names as they are") if unknown else ""
+        self.report({"INFO"}, "Imported " + str(count) + " nodes into " + collection.name + note)
+        return {"FINISHED"}
+
+
 class DARKTIDE_OT_import_reference_skeleton(bpy.types.Operator):
     bl_idname = "darktide.import_reference_skeleton"
     bl_label = "Import Rest-Pose Reference Skeleton"
@@ -1180,13 +1387,14 @@ def _selection_closure(context):
         objects.add(obj)
         pending.extend(obj.children)
 
-    # Parent and physics links are dependencies, but traversing their children
+    # Parent, armature and physics links are dependencies, but traversing their children
     # would pull unrelated siblings into an asset selected by one child mesh.
     pending = list(objects)
     while pending:
         obj = pending.pop()
         settings = obj.dt_collider
         dependencies = [obj.parent, settings.body, settings.body_a, settings.body_b]
+        dependencies += [modifier.object for modifier in obj.modifiers if modifier.type == "ARMATURE"]
         for target in dependencies:
             if target is not None and target not in objects:
                 objects.add(target)
@@ -1491,6 +1699,32 @@ class DARKTIDE_OT_export_intermediate(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class DARKTIDE_PT_bone_dangle(bpy.types.Panel):
+    bl_label = "Darktide Dangle"
+    bl_idname = "DARKTIDE_PT_bone_dangle"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "bone"
+
+    @classmethod
+    def poll(cls, context):
+        return context.bone is not None
+
+    def draw_header(self, context):
+        self.layout.prop(context.bone.dt_dangle, "enabled", text="")
+
+    def draw(self, context):
+        dangle = context.bone.dt_dangle
+        column = self.layout.column()
+        column.active = dangle.enabled
+        column.prop(dangle, "mode", expand=True)
+        names = (("mass", "gravity", "jiggle_stiffness", "jiggle_damping", "max_stretch") if dangle.mode == "jiggle"
+                 else ("length", "mass", "gravity", "damping", "stiffness", "max_angle"))
+        for name in names:
+            column.prop(dangle, name)
+        column.label(text="Skin the swinging mesh to this bone")
+
+
 class DARKTIDE_PT_asset_panel(bpy.types.Panel):
     bl_label = "Darktide Asset"
     bl_idname = "DARKTIDE_PT_asset_panel"
@@ -1539,6 +1773,12 @@ class DARKTIDE_PT_asset_panel(bpy.types.Panel):
         simple_row.prop(options, "embed_simple_animation")
         if options.embed_simple_animation:
             simple_row.prop(options, "simple_animation_clip", text="Clip")
+        ragdoll_row = output.row()
+        ragdoll_row.enabled = options.output_kind == "all"
+        ragdoll_row.prop(options, "ragdoll_event")
+        in_place_row = output.row()
+        in_place_row.enabled = options.output_kind != "model"
+        in_place_row.prop(options, "in_place")
         loop_row = output.row()
         loop_row.enabled = options.output_kind == "all"
         loop_row.prop(options, "auto_loop_single_clip")
@@ -1621,7 +1861,6 @@ class DARKTIDE_PT_asset_panel(bpy.types.Panel):
                 remove.index = index
             output.operator(DARKTIDE_OT_add_animation_transition.bl_idname, icon="ADD")
             output.label(text="The game or mod must send each named event.")
-            output.label(text="Runtime event dispatch is unverified.", icon="INFO")
         if not collection:
             output.prop(settings, "asset_path", text="Initial resource path")
             output.operator(DARKTIDE_OT_create_asset_collection.bl_idname, text="New Empty Asset")
@@ -1639,8 +1878,11 @@ class DARKTIDE_PT_asset_panel(bpy.types.Panel):
             reference.operator(DARKTIDE_OT_import_reference_skeleton.bl_idname)
             reference.prop(options, "only_weighted_bones")
             reference.label(text="Imported armature is added to this asset collection")
-            reference.label(text="Rest-pose authoring reference; runtime deformation is not validated")
             fit_skeleton.draw_fit_panel(layout, context, collection)
+            part = layout.box()
+            part.label(text="Game Unit Nodes")
+            part.prop(settings, "game_unit", text="")
+            part.operator(DARKTIDE_OT_import_game_unit.bl_idname)
         output.prop(options, "scale")
         if options.output_kind != "model":
             output.prop(options, "animation_fit_advanced", text="Animation fit settings")
@@ -1671,9 +1913,22 @@ class DARKTIDE_PT_asset_panel(bpy.types.Panel):
             material_box.prop(material.dt_material, "mode")
             if material.dt_material.mode == "external":
                 material_box.prop(material.dt_material, "resource")
+            elif material.dt_material.mode == "game_shader":
+                settings = material.dt_material
+                material_box.prop(scene.dt_asset, "game_folder")
+                material_box.prop(settings, "game_shader")
+                material_box.prop(settings, "shader_values")
+                material_box.prop(settings, "shader_textures")
+                preset = _game_shaders().get(settings.game_shader)
+                if preset:
+                    column = material_box.column(align=True)
+                    column.scale_y = 0.8
+                    for variable in preset["variables"]:
+                        column.label(text="%s = %s" % (variable["name"], ", ".join("%g" % v for v in variable["default"])))
+                    if preset["textures"]:
+                        column.label(text="Texture channels: " + ", ".join(preset["textures"]))
             elif material.dt_material.mode == "donor":
                 settings = material.dt_material
-                material_box.label(text="Renderer pairing is not game-verified")
                 material_box.prop(settings, "donor_stream")
                 for toggle, value in (("override_nm_r_blend", "nm_r_blend"),
                                       ("override_shared_blend", "shared_blend"),
@@ -1686,6 +1941,9 @@ class DARKTIDE_PT_asset_panel(bpy.types.Panel):
         if context.object:
             collider = layout.box()
             collider.label(text="Active object: " + context.object.name)
+            collider.prop(context.object.dt_collider, "visibility_group")
+            if context.object.type == "EMPTY":
+                particle_effect.draw(collider, context.object)
             collider.prop(context.object.dt_collider, "is_body")
             if context.object.dt_collider.is_body:
                 collider.prop(context.object.dt_collider, "actor")
@@ -1717,15 +1975,15 @@ class DARKTIDE_PT_asset_panel(bpy.types.Panel):
                         box.prop(joint, "swing_y"); box.prop(joint, "swing_z")
 
 
-CLASSES = (*fit_skeleton.CLASSES, DarktideAnimationState, DarktideAnimationVariable, DarktideAnimationTransition,
-           DarktideSceneSettings, DarktideCollectionSettings, DarktideMaterialSettings, DarktideColliderSettings,
+CLASSES = (*fit_skeleton.CLASSES, *particle_effect.CLASSES, DarktideAnimationState, DarktideAnimationVariable, DarktideAnimationTransition,
+           DarktideSceneSettings, DarktideCollectionSettings, DarktideMaterialSettings, DarktideDangleSettings, DarktideColliderSettings,
            DARKTIDE_OT_create_asset_collection, DARKTIDE_OT_update_asset_collection,
            DARKTIDE_OT_add_animation_state, DARKTIDE_OT_remove_animation_state,
            DARKTIDE_OT_add_animation_variable, DARKTIDE_OT_remove_animation_variable,
            DARKTIDE_OT_add_animation_transition, DARKTIDE_OT_remove_animation_transition,
            DARKTIDE_OT_make_collision_proxy, DARKTIDE_OT_export_intermediate,
-           DARKTIDE_OT_inspect, DARKTIDE_OT_build, DARKTIDE_OT_import_reference_skeleton,
-           *fit_skeleton.UI_CLASSES, DARKTIDE_PT_asset_panel)
+           DARKTIDE_OT_inspect, DARKTIDE_OT_build, DARKTIDE_OT_import_reference_skeleton, DARKTIDE_OT_import_game_unit,
+           *fit_skeleton.UI_CLASSES, DARKTIDE_PT_asset_panel, DARKTIDE_PT_bone_dangle)
 
 
 def register():
@@ -1735,9 +1993,13 @@ def register():
     bpy.types.Object.dt_collider = PointerProperty(type=DarktideColliderSettings)
     bpy.types.Collection.dt_asset_identity = PointerProperty(type=DarktideCollectionSettings)
     bpy.types.Material.dt_material = PointerProperty(type=DarktideMaterialSettings)
+    bpy.types.Bone.dt_dangle = PointerProperty(type=DarktideDangleSettings)
+    bpy.types.Object.dt_particles = PointerProperty(type=particle_effect.DarktideParticleSettings)
 
 
 def unregister():
+    del bpy.types.Bone.dt_dangle
+    del bpy.types.Object.dt_particles
     del bpy.types.Object.dt_collider
     del bpy.types.Collection.dt_asset_identity
     del bpy.types.Material.dt_material

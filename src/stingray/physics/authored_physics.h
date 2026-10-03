@@ -29,14 +29,17 @@ bool build_authored_actor(const Scene& scene,
                           std::string& error);
 
 #if defined(_MSC_VER) && defined(DTGLB_HAS_PHYSICS_COLLECTIONS)
-// Retail multi-body units (e.g. minion ragdolls) pair the PhysX collection with
-// one UNIT actor record per body, bound to the body's SceneGraph node; the
-// engine creates unit actors from those records. actor_records receives them.
+// Builds the PhysX collection (jointed bodies, each an actor of its own) and one
+// UNIT actor record per body in actor_records. The engine creates those records
+// as separate, unjointed actors. Retail ragdolls ship the collection alone, with
+// the bodies disabled until a state-machine ragdoll state creates them;
+// defer_dynamic_bodies emits dynamic bodies that way.
 bool build_authored_physics_scene(const Scene& scene,
                                   const std::vector<std::uint32_t>& source_node_hashes,
                                   std::vector<std::uint8_t>& bytes,
                                   std::vector<std::vector<std::uint8_t>>& actor_records,
-                                  std::string& error);
+                                  std::string& error,
+                                  bool defer_dynamic_bodies = false);
 #endif
 
 } // namespace dtglb::stingray::physics

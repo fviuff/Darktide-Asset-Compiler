@@ -21,7 +21,8 @@ bool build_authored_physics_scene(const Scene& scene,
                                   const std::vector<std::uint32_t>& hashes,
                                   std::vector<std::uint8_t>& bytes,
                                   std::vector<std::vector<std::uint8_t>>& actor_records,
-                                  std::string& error) {
+                                  std::string& error,
+                                  bool defer_dynamic_bodies) {
     bytes.clear();
     actor_records.clear();
     error.clear();
@@ -68,9 +69,12 @@ bool build_authored_physics_scene(const Scene& scene,
         CollectionBody body;
         const auto& name = node.name.empty() ? definition.id : node.name;
         if (!build_authored_actor(local_scene, name, hashes[index], body.actor, error)) return false;
+        // Retail names each body after its node; ragdoll actor sets look bodies up by that name.
+        body.actor.name_hash = hashes[index];
         std::vector<std::uint8_t> record;
         if (!serialize_actor(body.actor, record, error, true)) return false;
         actor_records.push_back(std::move(record));
+        if (defer_dynamic_bodies && body.actor.actor_template == "dynamic") body.actor.enabled = false;
         body.world_transform = node.world_stingray;
         bodies.push_back(std::move(body));
         inverse_frames.push_back(inverse);

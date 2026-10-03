@@ -724,7 +724,7 @@ bool build_scene_graph(const Scene& scene,
         }
         const auto joint = joint_name_hashes.find(source_index);
         const std::uint32_t name_hash = joint != joint_name_hashes.end()
-            ? joint->second : id32(native_names[authored_position++]);
+            ? joint->second : name_id32(native_names[authored_position++]);
         if (!hashes.insert(name_hash).second) {
             error = "lowered UNIT node hash collides with another scene node: " + source.name;
             return false;
@@ -878,15 +878,114 @@ bool collect_material_bindings(const Scene& scene,
     return !bindings.empty();
 }
 
+// One UNIT light record per glTF punctual light, bound to the light's own
+// SceneGraph node (its local +Y is glTF's -Z, the Stingray spot axis).
+// Field order follows the engine serializer FUN_1402b3cd0; the trailing block
+// is not exposed to Lua and repeats the constants every retail omni/spot light uses.
+bool write_light_records(const Scene& scene, const std::vector<std::uint32_t>& source_node_refs,
+                         BinaryWriter& w, std::uint32_t& count, std::string& error) {
+    count = 0;
+    for (std::size_t node_index = 0; node_index < scene.nodes.size(); ++node_index) {
+        const auto& node = scene.nodes[node_index];
+        if (node.light < 0) continue;
+        if (static_cast<std::size_t>(node.light) >= scene.lights.size()) { error = "node references a missing light"; return false; }
+        const auto& light = scene.lights[static_cast<std::size_t>(node.light)];
+        if (light.type == LightInfo::Type::Directional) continue; // retail units never carry directional lights
+        if (node_index >= source_node_refs.size() || source_node_refs[node_index] == 0) {
+            error = "light node is not present in the UNIT SceneGraph: " + node.name;
+            return false;
+        }
+        const bool spot = light.type == LightInfo::Type::Spot;
+        const float values[] = {light.color[0], light.color[1], light.color[2], light.intensity,
+                                light.range, light.inner_cone_angle, light.outer_cone_angle};
+        if (!std::all_of(std::begin(values), std::end(values), [](float v) { return std::isfinite(v) && v >= 0.0f; })) {
+            error = "light color, intensity, range and cone angles must be finite and nonnegative: " + node.name;
+            return false;
+        }
+        const std::string& name = node.name.empty() ? light.name : node.name;
+        w.u32(id32_from_id64(name));
+        w.u32(source_node_refs[node_index]);
+        for (float c : light.color) w.f32(c);
+        w.f32(6500.0f);                                   // correlated color temperature (neutral)
+        // Blender exports W * 683 / 4pi candela. Retail lamps are 15..600 (engine default 600),
+        // far below physical lumens, so map Blender watts * 60: a new 10 W lamp -> 600.
+        w.f32(light.intensity * (12.5663706f / 683.0f) * 60.0f);
+        w.f32(1.0f);                                      // volumetric intensity
+        w.f32(1.0f);                                      // particle intensity
+        w.f32(light.range > 0.0f ? light.range : 8.0f);   // falloff end (engine default 8)
+        w.f32(0.0f);                                      // falloff start
+        w.f32(spot ? 2.0f * light.inner_cone_angle : 0.0f); // spot angle start (full cone)
+        w.f32(spot ? 2.0f * light.outer_cone_angle : 3.14159274f); // spot angle end (full cone)
+        w.f32(0.0f); w.f32(0.0f);                         // box max y/z
+        w.u32(0);                                         // flags: no shadows, enabled
+        w.u32(spot ? 1u : 0u);                            // type: omni / spot
+        w.u64(0);                                         // material
+        w.u64(0);                                         // IES profile
+        w.u32(128);                                       // max shadow resolution
+        w.f32(0.8f);
+        w.f32(0.2f); w.f32(0.2f); w.f32(0.2f);
+        w.u32(144);
+        w.f32(0.97f); w.f32(100.0f); w.f32(0.2f); w.f32(1.0f);
+        w.u32(1);
+        w.f32(10.0f); w.f32(10.0f); w.f32(10.0f); w.f32(-10.0f);
+        w.u32(0);
+        w.f32(-10.0f);
+        w.u32(0); w.u32(0);
+        ++count;
+    }
+    return true;
+}
+
+// UNIT visibility groups: IdString32 name + MeshObject indices. A group node
+// claims every primitive owned by that node or one of its descendants.
+void write_visibility_groups(const Scene& scene, BinaryWriter& w) {
+    std::vector<std::pair<std::string, std::vector<std::uint32_t>>> groups;
+    const auto under = [&](int node, int ancestor) {
+        for (int guard = 0; node >= 0 && static_cast<std::size_t>(node) < scene.nodes.size() && guard < 65536; ++guard) {
+            if (node == ancestor) return true;
+            node = scene.nodes[static_cast<std::size_t>(node)].parent;
+        }
+        return false;
+    };
+    for (const auto& member : scene.asset_definition.visibility_groups) {
+        auto group = std::find_if(groups.begin(), groups.end(), [&](const auto& g) { return g.first == member.group; });
+        if (group == groups.end()) group = groups.insert(groups.end(), {member.group, {}});
+        for (std::size_t i = 0; i < scene.primitives.size(); ++i) {
+            const auto& primitive = scene.primitives[i];
+            if ((under(primitive.render_owner_node, member.source_node) || under(primitive.source_node, member.source_node)) &&
+                std::find(group->second.begin(), group->second.end(), static_cast<std::uint32_t>(i)) == group->second.end())
+                group->second.push_back(static_cast<std::uint32_t>(i));
+        }
+    }
+    w.u32(static_cast<std::uint32_t>(groups.size()));
+    for (const auto& [name, meshes] : groups) {
+        w.u32(id32_from_id64(name));
+        w.u32(static_cast<std::uint32_t>(meshes.size()));
+        for (const auto mesh : meshes) w.u32(mesh);
+    }
+}
+
 bool write_static_tail(BinaryWriter& w, const Scene& scene, const WriteOptions& options,
                        const std::vector<std::string>& material_slots,
                        const std::vector<std::vector<std::uint8_t>>& actor_records,
                        const std::vector<std::uint8_t>& physics_scene,
+                       const std::vector<std::uint32_t>& source_node_refs,
                        std::string& error) {
     w.u32(static_cast<std::uint32_t>(actor_records.size()));
     for (const auto& record : actor_records) w.bytes(record.data(), record.size());
-    for (int i = 0; i < 11; ++i) w.u32(0);
-    w.u8(0);
+    // actors_2, u32 list, cameras, then lights.
+    for (int i = 0; i < 3; ++i) w.u32(0);
+    BinaryWriter lights;
+    std::uint32_t light_count = 0;
+    if (!write_light_records(scene, source_node_refs, lights, light_count, error)) return false;
+    w.u32(light_count);
+    w.bytes(lights.data().data(), lights.data().size());
+    // u64 list, LOD objects, terrains, unused, joints, movers, unused.
+    for (int i = 0; i < 7; ++i) w.u32(0);
+    // Unit resource +0x2b0: the engine only creates the animation blender and
+    // instances the state machine named below when this is set (all retail
+    // units that reference a state machine set it).
+    w.u8(options.animation_state_machine_resource.empty() ? 0 : 1);
     w.u32(static_cast<std::uint32_t>(options.animation_state_machine_resource.size()));
     if (!options.animation_state_machine_resource.empty())
         w.bytes(options.animation_state_machine_resource.data(), options.animation_state_machine_resource.size());
@@ -894,7 +993,7 @@ bool write_static_tail(BinaryWriter& w, const Scene& scene, const WriteOptions& 
     static constexpr std::array<std::uint8_t, 8> dynamic_data{0xff,0xff,0xff,0xff,0,0,0,0};
     w.u32(static_cast<std::uint32_t>(dynamic_data.size()));
     w.bytes(dynamic_data.data(), dynamic_data.size());
-    w.u32(0);
+    write_visibility_groups(scene, w);
     w.u32(0);
     w.u32(0);
 
@@ -1064,15 +1163,15 @@ bool build_unit_v115(const Scene& scene, UnitResource& out, std::string& error, 
         reserved_joint_hashes.push_back(joint_hash);
     }
     mesh_names = lower_unique_native_names(authored_mesh_names, mesh_indices, "mesh", "mesh_", reserved_joint_hashes);
-    for (const auto& name : mesh_names) mesh_name_hashes.push_back(id32(name));
+    for (const auto& name : mesh_names) mesh_name_hashes.push_back(name_id32(name));
 
     std::set<std::uint32_t> mesh_hash_set(mesh_name_hashes.begin(), mesh_name_hashes.end());
     mesh_hash_set.insert(reserved_joint_hashes.begin(), reserved_joint_hashes.end());
     // Retail units root at root_point; gear linking and Unit.node lookups expect it.
     // (used to be __glb_static_root__, worked but looked nothing like the real thing)
     std::string root_text = "root_point";
-    while (mesh_hash_set.count(id32(root_text))) root_text += "_node";
-    const std::uint32_t root_name_hash = id32(root_text);
+    while (mesh_hash_set.count(id32_from_id64(root_text))) root_text += "_node";
+    const std::uint32_t root_name_hash = id32_from_id64(root_text);
 
     std::vector<std::uint8_t> primary_actor;
     if (options.fitted_physics) {
@@ -1167,8 +1266,10 @@ bool build_unit_v115(const Scene& scene, UnitResource& out, std::string& error, 
     if (options.authored_physics && !options.fitted_physics && !scene.asset_definition.node_bodies.empty()) {
 #ifdef DTGLB_HAS_PHYSICS_COLLECTIONS
         std::vector<std::vector<std::uint8_t>> body_records;
-        if (!physics::build_authored_physics_scene(scene, source_node_hashes, physics_scene, body_records, error)) return false;
-        for (auto& record : body_records) actor_records.push_back(std::move(record));
+        if (!physics::build_authored_physics_scene(scene, source_node_hashes, physics_scene, body_records, error,
+                                                   options.ragdoll_handoff)) return false;
+        if (!options.ragdoll_handoff)
+            for (auto& record : body_records) actor_records.push_back(std::move(record));
 #else
         error = "node-bound authored physics requires the native PhysX collection backend";
         return false;
@@ -1192,7 +1293,7 @@ bool build_unit_v115(const Scene& scene, UnitResource& out, std::string& error, 
                                  renderer_node_refs[i], static_cast<std::uint32_t>(i + 1),
                                  render_flags, skin_ref, skinned);
     }
-    if (!write_static_tail(body, scene, options, material_slots, actor_records, physics_scene, error)) return false;
+    if (!write_static_tail(body, scene, options, material_slots, actor_records, physics_scene, source_node_refs, error)) return false;
 
     out.body = body.data();
     return true;

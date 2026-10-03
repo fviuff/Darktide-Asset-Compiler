@@ -12,11 +12,8 @@ std::vector<std::string> lower_unique_native_names(
     const std::vector<std::size_t>& stable_indices,
     const std::string& kind,
     const std::string& empty_prefix,
-    const std::vector<std::uint32_t>& reserved_hashes,
-    NativeNameHashDomain hash_domain) {
-    const auto native_hash = [hash_domain](const std::string& value) {
-        return hash_domain == NativeNameHashDomain::Id64High32 ? id32_from_id64(value) : id32(value);
-    };
+    const std::vector<std::uint32_t>& reserved_hashes) {
+    const auto native_hash = [](const std::string& value) { return name_id32(value); };
     std::vector<std::string> names;
     names.reserve(authored_names.size());
     std::map<std::string, std::size_t> counts;
@@ -73,8 +70,7 @@ MaterialSlotLowering lower_material_slots(const std::vector<std::string>& materi
         authored.push_back(material_names[index]); stable.push_back(index); owners.push_back(index);
     }
     const auto lowered = lower_unique_native_names(authored, stable, "material", "material_",
-        has_missing ? std::vector<std::uint32_t>{id32_from_id64("__no_material__")} : std::vector<std::uint32_t>{},
-        NativeNameHashDomain::Id64High32);
+        has_missing ? std::vector<std::uint32_t>{id32_from_id64("__no_material__")} : std::vector<std::uint32_t>{});
     for (std::size_t i = 0; i < lowered.size(); ++i) result.material_slots[owners[i]] = lowered[i];
     if (has_missing) result.missing_slot = "__no_material__";
     result.primitive_slots.reserve(primitive_material_indices.size());

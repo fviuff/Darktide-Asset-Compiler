@@ -24,6 +24,22 @@ bool resolve_asset_definition(Scene& scene, std::string& error) {
                 joints.insert(scene.skins[skin].joints.begin(), scene.skins[skin].joints.end());
             }
         }
+        // A body on a helper node under a skin bone (a collider parented to a bone in
+        // Blender) must move the bone itself, or the skinned mesh never follows it.
+        // Retail ragdoll bodies are bound to their bones.
+        const auto is_used_joint = [&](int node) {
+            return std::any_of(used_skin_joints.begin(), used_skin_joints.end(),
+                               [&](const auto& entry) { return entry.second.count(node) != 0; });
+        };
+        for (auto& body : scene.asset_definition.node_bodies) {
+            if (body.source_node < 0 || static_cast<std::size_t>(body.source_node) >= scene.nodes.size() ||
+                is_used_joint(body.source_node)) continue;
+            const int parent = scene.nodes[static_cast<std::size_t>(body.source_node)].parent;
+            if (parent < 0 || !is_used_joint(parent)) continue;
+            scene.notes.push_back("body '" + body.id + "' on helper node '" + scene.nodes[static_cast<std::size_t>(body.source_node)].name +
+                                  "' drives its parent bone '" + scene.nodes[static_cast<std::size_t>(parent)].name + "'");
+            body.source_node = parent;
+        }
         for (const auto& body : asset.node_bodies) {
             if (body.id.empty() || body.id.find('\0') != std::string::npos || !ids.insert(body.id).second || body.source_node < 0 || static_cast<std::size_t>(body.source_node) >= scene.nodes.size() ||
                 !std::isfinite(body.mass) || body.mass < 0 || (body.actor != "static" && body.actor != "dynamic" && body.actor != "keyframed") ||
@@ -48,7 +64,8 @@ bool resolve_asset_definition(Scene& scene, std::string& error) {
             if (collider.id.empty() || collider.source_node < 0 || static_cast<std::size_t>(collider.source_node) >= scene.nodes.size() ||
                 !bodies.count(collider.body) || !definitions.emplace(collider.source_node, &collider).second ||
                 !collider_ids.insert(collider.id).second ||
-                (bodies.count(collider.id) && bodies.at(collider.id)->source_node != collider.source_node)) {
+                (bodies.count(collider.id) && bodies.at(collider.id)->source_node != collider.source_node &&
+                 bodies.at(collider.id)->source_node != scene.nodes[static_cast<std::size_t>(collider.source_node)].parent)) {
                 error = "version 2 collider has an invalid body, node, or duplicate id"; return false;
             }
         }

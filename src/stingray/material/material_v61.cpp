@@ -50,7 +50,7 @@ bool locate_v61_variable_data(const std::vector<std::uint8_t>& bytes,
     std::size_t hp = 0;
     std::uint32_t version=0, material_offset=0, material_size=0;
     std::uint32_t shader_offset=0, shader_size=0, other_offset=0, other_size=0;
-    if (!pull(bytes,hp,bytes.size(),version) || version != 61 ||
+    if (!pull(bytes,hp,bytes.size(),version) || (version != 61 && version != 62) ||
         !pull(bytes,hp,bytes.size(),material_offset) || material_offset != kMaterialPayloadOffset ||
         !pull(bytes,hp,bytes.size(),material_size) || !pull(bytes,hp,bytes.size(),shader_offset) ||
         !pull(bytes,hp,bytes.size(),shader_size) || !pull(bytes,hp,bytes.size(),other_offset) ||
@@ -111,7 +111,7 @@ bool locate_v61_variable_data(const std::vector<std::uint8_t>& bytes,
 }
 
 bool validate_material_stream_model(const MaterialStream& m, std::string& error) {
-    if (m.version != 60 && m.version != 61) { error="unsupported material stream version"; return false; }
+    if (m.version != 60 && m.version != 61 && m.version != 62) { error="unsupported material stream version"; return false; }
     const unsigned shader_provider_forms = (m.direct_shader_selector_hash != 0 ? 1u : 0u) +
         (m.shader_provider_material_hash != 0 ? 1u : 0u) + (!m.shader_blob.empty() ? 1u : 0u);
     if (shader_provider_forms != 1u) { error="material requires exactly one shader provider form"; return false; }
@@ -155,7 +155,7 @@ bool parse_material_stream(const std::vector<std::uint8_t>& b, MaterialStream& o
     if(b.size()<28){error="material stream is shorter than 28-byte header";return false;}
     MaterialStream m;std::size_t hp=0;std::uint32_t material_offset=0,material_size=0,shader_offset=0,shader_size=0,other_offset=0,other_size=0;
     if(!pull(b,hp,b.size(),m.version)||!pull(b,hp,b.size(),material_offset)||!pull(b,hp,b.size(),material_size)||!pull(b,hp,b.size(),shader_offset)||!pull(b,hp,b.size(),shader_size)||!pull(b,hp,b.size(),other_offset)||!pull(b,hp,b.size(),other_size)){error="material stream header truncated";return false;}
-    if(m.version!=60&&m.version!=61){error="unsupported material stream version";return false;} if(material_offset!=28){error="unsupported material payload offset";return false;}
+    if(m.version!=60&&m.version!=61&&m.version!=62){error="unsupported material stream version";return false;} if(material_offset!=28){error="unsupported material payload offset";return false;}
     const std::uint64_t me64=static_cast<std::uint64_t>(material_offset)+material_size;if(me64>b.size()){error="material section points outside stream";return false;}const auto me=static_cast<std::size_t>(me64);
     std::size_t shader_end=me;if(shader_size){if(shader_offset!=me||static_cast<std::uint64_t>(shader_offset)+shader_size>b.size()){error="invalid/non-contiguous shader section";return false;}shader_end=static_cast<std::size_t>(shader_offset)+shader_size;}
     std::size_t other_end=shader_end;if(other_size){if(other_offset!=shader_end||static_cast<std::uint64_t>(other_offset)+other_size>b.size()){error="invalid/non-contiguous auxiliary section";return false;}other_end=static_cast<std::size_t>(other_offset)+other_size;}
@@ -189,7 +189,7 @@ bool parse_material_header(const std::vector<std::uint8_t>& b, MaterialHeader& o
 bool build_inherited_material(const InheritedMaterialSpec& s, MaterialStream& out, std::string& error) {
     if(!s.shader_provider_material_hash){error="inherited material requires a nonzero shader provider material hash";return false;}
     static const std::array<const char*,8> allowed{{"default","metal_solid","metal_sheet","cloth","concrete","brick","bone","plastic"}};
-    if(!s.surface_material.empty() && std::find_if(allowed.begin(),allowed.end(),[&](const char* v){return s.surface_material==v;})==allowed.end()){error="surface material is outside the evidenced substance_basic child profile";return false;}
+    if(!s.surface_material.empty() && std::find_if(allowed.begin(),allowed.end(),[&](const char* v){return s.surface_material==v;})==allowed.end()){error="unknown surface material";return false;}
     if (s.contexts.has_value() && !s.surface_material.empty()) { error="inherited material cannot combine explicit contexts with surface_material"; return false; }
     MaterialStream m;m.version=61;m.direct_shader_selector_hash=0;m.shader_provider_material_hash=s.shader_provider_material_hash;m.parent_material_hash=s.parent_material_hash;m.textures=s.textures;m.variables=s.variables;m.variable_data=s.variable_data;
     if (!s.contexts.has_value()) {

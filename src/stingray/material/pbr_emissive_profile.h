@@ -8,7 +8,7 @@
 
 namespace dtglb::stingray::material {
 
-// Native inherited profile evidenced by the current PBR emissive material
+// Inherited layout of the game's PBR emissive material
 // corpus. This describes the observed stream layout; it does not select a
 // profile automatically for glTF materials.
 struct PbrEmissiveProfileSpec {

@@ -206,13 +206,13 @@ std::vector<std::string> current_compiler_gaps(const Scene& s, const CompileOpti
         active_custom_attribute = active_custom_attribute || !primitive.custom_attributes.empty();
     }
     add_gap(gaps, unsupported_skin_channel_set,
-            "active JOINTS/WEIGHTS sets above 1 have no proven SkinDT mapping");
+            "more than one JOINTS/WEIGHTS set is not supported");
     add_gap(gaps, unsupported_skinned_texcoord_set,
-            "active skinned geometry uses more than two TEXCOORD sets, exceeding the proven SkinDT MeshGeometry profile");
+            "skinned meshes support at most two TEXCOORD sets");
     add_gap(gaps, invalid_skin_channels,
-            "active skinned geometry has JOINTS/WEIGHTS data outside the proven paired uint8/unorm profile");
+            "skin JOINTS/WEIGHTS must fit four 8-bit joint indices with normalized weights");
     add_gap(gaps, packed_half_range_exceeded,
-            "active POSITION/TEXCOORD values exceed the finite binary16 range of the proven MeshGeometry profile");
+            "POSITION/TEXCOORD values exceed the half-float range the game stores them in");
     bool invalid_used_skin_palette = false;
     if (model) for (const auto skin_index : used_skins) {
         const auto& skin = s.skins[skin_index];
@@ -231,7 +231,7 @@ std::vector<std::string> current_compiler_gaps(const Scene& s, const CompileOpti
     add_gap(gaps, invalid_used_skin_palette,
             "active SkinDT skin requires 1..256 finite inverse-bind matrices matching its joints");
     add_gap(gaps, active_custom_attribute,
-            "active custom vertex attributes have no proven current UNIT mapping");
+            "custom vertex attributes are not supported");
     bool custom_gpu_instance_attribute = false;
     const auto active_nodes = active_node_indices(s);
     for (const int node_index : active_nodes) {
@@ -241,7 +241,7 @@ std::vector<std::string> current_compiler_gaps(const Scene& s, const CompileOpti
         }
     }
     add_gap(gaps, model && custom_gpu_instance_attribute,
-            "custom EXT_mesh_gpu_instancing attributes have no proven current UNIT material or vertex mapping");
+            "custom EXT_mesh_gpu_instancing attributes are not supported");
     if (model && !s.primitives.empty()) {
         bool invalid_node_identity = false;
         if (f.node_count > 1 || f.parent_edge_count != 0 || !used_skins.empty()) {
@@ -292,7 +292,7 @@ std::vector<std::string> current_compiler_gaps(const Scene& s, const CompileOpti
     }
     if (animations && animation_count != 0 && animation_skin != static_cast<std::size_t>(-1)) {
         add_gap(gaps, s.skins[animation_skin].joints.size() > 4096u,
-                "selected animation skin exceeds the proven 4096-bone BONES resource limit");
+                "the animated skin has more than 4096 bones");
         std::set<int> selected_joints(s.skins[animation_skin].joints.begin(), s.skins[animation_skin].joints.end());
         if (animations) for (const auto index : animation_indices) {
             const auto& animation = s.animations[index];
@@ -313,12 +313,12 @@ std::vector<std::string> current_compiler_gaps(const Scene& s, const CompileOpti
                 invalid_animation_base = true;
         }
         add_gap(gaps, invalid_animation_base,
-                "selected animation skin has a joint base transform outside the proven finite TRS profile");
+                "the animated skin has a joint transform that is not a finite translation/rotation/scale");
     }
     add_gap(gaps, active_color_attribute,
-            "COLOR_n has no proven current Darktide UNIT producer mapping yet");
+            "vertex colors (COLOR_n) are not supported on this mesh");
     add_gap(gaps, unsupported_texcoord_set,
-            "TEXCOORD set above the current observed UNIT profile (0..6) requires a proven mapping");
+            "TEXCOORD sets above 6 are not supported");
     if (model && o.auto_materials && o.material_override.empty()) {
         for (const auto material_index : used_material_indices(s)) {
             const auto gap = core_material_gap(s, s.materials[material_index]);
@@ -358,7 +358,9 @@ CompilationPlan plan_compilation(const Scene& scene, const CompileOptions& optio
         }
     }
     plan.emit_animations = options.output_kind != OutputKind::Model && !plan.animation_indices.empty();
+    // a scene holding only particle effects ships just those
     plan.placeholder_unit = options.output_kind != OutputKind::Animations && scene.primitives.empty() &&
+        scene.particle_effects.empty() &&
         (options.output_kind == OutputKind::Model || !plan.emit_animations);
     plan.emit_unit = options.output_kind != OutputKind::Animations &&
         (!scene.primitives.empty() || plan.placeholder_unit);
@@ -488,7 +490,26 @@ CompilationPlan plan_compilation(const Scene& scene, const CompileOptions& optio
                 "' has active or required semantics that the compiler does not implement");
         }
     }
-    const bool emits_state_machine = plan.state_machine_animation_index || !plan.state_machine_states.empty();
+    if (!options.ragdoll_event.empty()) {
+        const bool has_dynamic_body = std::any_of(scene.asset_definition.node_bodies.begin(),
+            scene.asset_definition.node_bodies.end(), [](const BodyDefinition& body) { return body.actor == "dynamic"; });
+        if (!has_dynamic_body || !options.physics)
+            plan.gaps.push_back("--ragdoll-event needs dynamic node bodies (bodies on the rig's bones)");
+        plan.ragdoll_event = options.ragdoll_event;
+        if (plan.state_machine_animation_index) {
+            // A single-clip machine becomes a named state so the ragdoll state can join it.
+            plan.state_machine_states.push_back({"default", *plan.state_machine_animation_index, plan.state_machine_looping});
+            plan.state_machine_animation_index.reset();
+        }
+    }
+    if (!scene.asset_definition.dangles.empty() || !plan.ragdoll_event.empty()) {
+        if (!plan.emit_unit || !plan.skin_index)
+            plan.gaps.push_back("dangling bones and ragdolls need a unit with a skinned mesh");
+        else if (!plan.state_machine_animation_index && plan.state_machine_states.empty())
+            plan.rest_state = true;
+    }
+    const bool emits_state_machine = plan.state_machine_animation_index || !plan.state_machine_states.empty() ||
+        plan.rest_state;
     if (options.simple_clip_index && !options.simple_animation)
         plan.gaps.push_back("--simple-clip cannot be combined with --no-simple-animation");
     if (options.simple_clip_index && emits_state_machine)

@@ -241,6 +241,7 @@ set(DARKTIDE_COMPILER_CORE_SOURCES
     src/compiler/capability_registry.cpp
     src/compiler/source_queries.cpp
     src/compiler/material_builder.cpp
+    src/compiler/particles_builder.cpp
     src/compiler/resource_builder.cpp
     src/compiler/asset_definition_resolver.cpp
     src/compiler/compilation_plan.cpp
@@ -251,11 +252,14 @@ set(DARKTIDE_COMPILER_CORE_SOURCES
     src/app/asset_settings.cpp
     src/app/source_inspection.cpp
     src/gltf/glb_loader.cpp
+    src/gltf/json_value.cpp
     src/gltf/gltf_images.cpp
     src/gltf/gltf_meshes.cpp
     src/gltf/animation_sampler.cpp
     src/processing/tangent_generator.cpp
     src/processing/scene_scaler.cpp
+    src/processing/dangle_canonicalizer.cpp
+    src/processing/root_motion.cpp
     src/processing/material_canonicalizer.cpp
     src/processing/uv1_material_canonicalizer.cpp
     src/processing/attribute_canonicalizer.cpp
@@ -268,6 +272,7 @@ set(DARKTIDE_COMPILER_CORE_SOURCES
     src/stingray/murmur_hash.cpp
     src/stingray/binary_writer.cpp
     src/stingray/cooked_resource.cpp
+    src/stingray/particles/particles_resource.cpp
     src/stingray/physics/physx_cooking.cpp
     src/stingray/physics/authored_physics.cpp
     src/stingray/unit/unit_v115.cpp
@@ -369,7 +374,8 @@ endif()
 # Build the Blender addon archive from its Python sources so it is available to
 # both `cmake --install` and CPack without checking generated files into source.
 file(GLOB DARKTIDE_BLENDER_ADDON_SOURCES CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/tools/blender/darktide_assets/*.py")
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/blender/darktide_assets/*.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/blender/darktide_assets/*.json")
 set(_darktide_blender_addon_entries)
 foreach(_addon_source IN LISTS DARKTIDE_BLENDER_ADDON_SOURCES)
     file(RELATIVE_PATH _addon_entry
@@ -387,40 +393,12 @@ add_custom_command(
     VERBATIM)
 add_custom_target(DarktideBlenderAddonZip ALL DEPENDS "${DARKTIDE_BLENDER_ADDON_ZIP}")
 
-# The Wine download uses the same x64 Windows compiler and addon. Keep a
-# separately named archive so Linux users can select the supported runner.
-if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
-    set(_darktide_wine_stage "${CMAKE_CURRENT_BINARY_DIR}/linux-wine-stage")
-    file(MAKE_DIRECTORY "${_darktide_wine_stage}")
-    set(DARKTIDE_LINUX_WINE_ZIP "${CMAKE_CURRENT_BINARY_DIR}/DarktideGLBCompiler-linux-wine-x64.zip")
-    add_custom_target(DarktideLinuxWineBundle ALL
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "${_darktide_wine_stage}"
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-            "$<TARGET_FILE:DarktideGLBCompiler>" "${_darktide_wine_stage}/DarktideGLBCompiler.exe"
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-            "${CMAKE_CURRENT_SOURCE_DIR}/README.md" "${_darktide_wine_stage}/README.md"
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-            "${DARKTIDE_BLENDER_ADDON_ZIP}" "${_darktide_wine_stage}/darktide_assets_blender.zip"
-        COMMAND "${CMAKE_COMMAND}" -E tar cf "${DARKTIDE_LINUX_WINE_ZIP}"
-            --format=zip -- README.md DarktideGLBCompiler.exe darktide_assets_blender.zip
-        DEPENDS DarktideGLBCompiler DarktideBlenderAddonZip
-        WORKING_DIRECTORY "${_darktide_wine_stage}"
-        COMMENT "Packaging the Linux Wine SDK"
-        VERBATIM)
-endif()
-
 # The release archive intentionally contains only these three root-level files.
+# One archive serves Windows and Linux: on Linux the addon runs the same exe through Wine.
 install(TARGETS DarktideGLBCompiler RUNTIME DESTINATION ".")
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/README.md" DESTINATION ".")
 install(FILES "${DARKTIDE_BLENDER_ADDON_ZIP}" DESTINATION ".")
 
-if(WIN32)
-    set(_darktide_package_platform windows)
-elseif(APPLE)
-    set(_darktide_package_platform macos)
-else()
-    set(_darktide_package_platform linux)
-endif()
 string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" _darktide_package_arch)
 if(_darktide_package_arch MATCHES "^(x86_64|amd64)$")
     set(_darktide_package_arch x64)
@@ -431,5 +409,5 @@ elseif(_darktide_package_arch MATCHES "^i[3-6]86$")
 endif()
 set(CPACK_GENERATOR ZIP)
 set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF)
-set(CPACK_PACKAGE_FILE_NAME "DarktideGLBCompiler-${_darktide_package_platform}-${_darktide_package_arch}")
+set(CPACK_PACKAGE_FILE_NAME "DarktideGLBCompiler-${_darktide_package_arch}")
 include(CPack)

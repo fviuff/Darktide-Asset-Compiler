@@ -21,7 +21,7 @@ std::size_t remove_unused_texcoords(ChannelList& channels, const std::set<std::u
     const auto before = channels.size();
     channels.erase(std::remove_if(channels.begin(), channels.end(), [&](const VertexChannel& channel) {
         if (channel.semantic != VertexChannel::Semantic::Texcoord) return false;
-        // The observed UNIT MeshGeometry profile has seven addressable UV sets.
+        // UNIT MeshGeometry has seven addressable UV sets.
         // Higher source sets cannot survive even when a stale material binding
         // still names them (automatic material lowering has already atlased such
         // bindings to set zero; explicit overrides do not consume source UVs).

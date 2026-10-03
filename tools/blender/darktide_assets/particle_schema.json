@@ -1,0 +1,1738 @@
+{
+ "initializers": [
+  {
+   "type": "zero",
+   "fields": [
+    {
+     "name": "channel",
+     "kind": "channel"
+    },
+    {
+     "name": "size",
+     "kind": "uint"
+    }
+   ]
+  },
+  {
+   "type": "random_float",
+   "fields": [
+    {
+     "name": "channel",
+     "kind": "channel"
+    },
+    {
+     "name": "min",
+     "kind": "float"
+    },
+    {
+     "name": "max",
+     "kind": "float"
+    }
+   ]
+  },
+  {
+   "type": "velocity_cone",
+   "fields": [
+    {
+     "name": "velocity",
+     "kind": "channel"
+    },
+    {
+     "name": "speed_min",
+     "kind": "float"
+    },
+    {
+     "name": "speed_max",
+     "kind": "float"
+    },
+    {
+     "name": "theta_min",
+     "kind": "float"
+    },
+    {
+     "name": "theta_max",
+     "kind": "float"
+    },
+    {
+     "name": "direction",
+     "kind": "vector3"
+    }
+   ]
+  },
+  {
+   "type": "position_sphere",
+   "fields": [
+    {
+     "name": "position",
+     "kind": "channel"
+    },
+    {
+     "name": "radius_min",
+     "kind": "float"
+    },
+    {
+     "name": "radius_max",
+     "kind": "float"
+    }
+   ]
+  },
+  {
+   "type": "position_box",
+   "fields": [
+    {
+     "name": "position",
+     "kind": "channel"
+    },
+    {
+     "name": "min",
+     "kind": "vector3"
+    },
+    {
+     "name": "max",
+     "kind": "vector3"
+    }
+   ]
+  },
+  {
+   "type": "random_int",
+   "fields": [
+    {
+     "name": "channel",
+     "kind": "channel"
+    },
+    {
+     "name": "min",
+     "kind": "int"
+    },
+    {
+     "name": "max",
+     "kind": "int"
+    }
+   ]
+  },
+  {
+   "type": "zero_velocity",
+   "fields": [
+    {
+     "name": "velocity",
+     "kind": "channel"
+    }
+   ]
+  },
+  {
+   "type": "copy",
+   "fields": [
+    {
+     "name": "source",
+     "kind": "channel"
+    },
+    {
+     "name": "destination",
+     "kind": "channel"
+    },
+    {
+     "name": "size",
+     "kind": "uint"
+    }
+   ]
+  },
+  {
+   "type": "velocity_box",
+   "fields": [
+    {
+     "name": "velocity",
+     "kind": "channel"
+    },
+    {
+     "name": "min",
+     "kind": "vector3"
+    },
+    {
+     "name": "max",
+     "kind": "vector3"
+    }
+   ]
+  },
+  {
+   "type": "normal_box",
+   "fields": [
+    {
+     "name": "tangent",
+     "kind": "channel"
+    },
+    {
+     "name": "binormal",
+     "kind": "channel"
+    },
+    {
+     "name": "min",
+     "kind": "vector3"
+    },
+    {
+     "name": "max",
+     "kind": "vector3"
+    }
+   ]
+  },
+  {
+   "type": "tangent_box",
+   "fields": [
+    {
+     "name": "tangent",
+     "kind": "channel"
+    },
+    {
+     "name": "min",
+     "kind": "vector3"
+    },
+    {
+     "name": "max",
+     "kind": "vector3"
+    }
+   ]
+  },
+  {
+   "type": "position_cylinder",
+   "fields": [
+    {
+     "name": "position",
+     "kind": "channel"
+    },
+    {
+     "name": "radius_min",
+     "kind": "float"
+    },
+    {
+     "name": "radius_max",
+     "kind": "float"
+    },
+    {
+     "name": "height_min",
+     "kind": "float"
+    },
+    {
+     "name": "height_max",
+     "kind": "float"
+    },
+    {
+     "name": "angle_min",
+     "kind": "float"
+    },
+    {
+     "name": "angle_max",
+     "kind": "float"
+    },
+    {
+     "name": "radius_variable",
+     "kind": "int"
+    },
+    {
+     "name": "height_variable",
+     "kind": "int"
+    },
+    {
+     "name": "angle_variable",
+     "kind": "int"
+    }
+   ]
+  },
+  {
+   "type": "velocity_cylinder",
+   "fields": [
+    {
+     "name": "position",
+     "kind": "channel"
+    },
+    {
+     "name": "velocity",
+     "kind": "channel"
+    },
+    {
+     "name": "radial_min",
+     "kind": "float"
+    },
+    {
+     "name": "radial_max",
+     "kind": "float"
+    },
+    {
+     "name": "z_min",
+     "kind": "float"
+    },
+    {
+     "name": "z_max",
+     "kind": "float"
+    },
+    {
+     "name": "angular_min",
+     "kind": "float"
+    },
+    {
+     "name": "angular_max",
+     "kind": "float"
+    }
+   ]
+  },
+  {
+   "type": "position_mesh",
+   "fields": [
+    {
+     "name": "position",
+     "kind": "channel"
+    },
+    {
+     "name": "radius_min",
+     "kind": "float"
+    },
+    {
+     "name": "radius_max",
+     "kind": "float"
+    },
+    {
+     "name": "height_min",
+     "kind": "float"
+    },
+    {
+     "name": "height_max",
+     "kind": "float"
+    },
+    {
+     "name": "points",
+     "kind": "points"
+    }
+   ]
+  },
+  {
+   "type": "position_mesh_skinned",
+   "fields": [
+    {
+     "name": "data",
+     "kind": "bytes"
+    }
+   ]
+  },
+  {
+   "type": "float",
+   "fields": [
+    {
+     "name": "channel",
+     "kind": "channel"
+    },
+    {
+     "name": "value",
+     "kind": "float"
+    }
+   ]
+  },
+  {
+   "type": "vector",
+   "fields": [
+    {
+     "name": "channel",
+     "kind": "channel"
+    },
+    {
+     "name": "value",
+     "kind": "vector3"
+    }
+   ]
+  },
+  {
+   "type": "vector_language_program",
+   "fields": [
+    {
+     "name": "data",
+     "kind": "bytes"
+    }
+   ]
+  },
+  {
+   "type": "leap_number",
+   "fields": [
+    {
+     "name": "leap_number",
+     "kind": "channel"
+    }
+   ]
+  },
+  {
+   "type": "initializer_13",
+   "fields": [
+    {
+     "name": "channel",
+     "kind": "channel"
+    }
+   ]
+  },
+  {
+   "type": "spline_control_points",
+   "fields": [
+    {
+     "name": "data",
+     "kind": "bytes"
+    }
+   ]
+  },
+  {
+   "type": "multiply_by_variable",
+   "fields": [
+    {
+     "name": "channel",
+     "kind": "channel"
+    },
+    {
+     "name": "channel_size",
+     "kind": "uint"
+    },
+    {
+     "name": "variable",
+     "kind": "uint"
+    }
+   ]
+  },
+  {
+   "type": "rotation_align_to_local",
+   "fields": [
+    {
+     "name": "tangent",
+     "kind": "channel"
+    },
+    {
+     "name": "binormal",
+     "kind": "channel"
+    }
+   ]
+  },
+  {
+   "type": "runtime_position_mesh",
+   "fields": [
+    {
+     "name": "position",
+     "kind": "channel"
+    },
+    {
+     "name": "radius_min",
+     "kind": "float"
+    },
+    {
+     "name": "radius_max",
+     "kind": "float"
+    },
+    {
+     "name": "height_min",
+     "kind": "float"
+    },
+    {
+     "name": "height_max",
+     "kind": "float"
+    }
+   ]
+  },
+  {
+   "type": "initializer_18",
+   "fields": [
+    {
+     "name": "channel",
+     "kind": "channel"
+    }
+   ]
+  }
+ ],
+ "simulators": [
+  {
+   "type": "age_age",
+   "fields": [
+    {
+     "name": "age",
+     "kind": "channel"
+    },
+    {
+     "name": "life",
+     "kind": "channel"
+    }
+   ]
+  },
+  {
+   "type": "position_integrate",
+   "fields": [
+    {
+     "name": "position",
+     "kind": "channel"
+    },
+    {
+     "name": "velocity",
+     "kind": "channel"
+    }
+   ]
+  },
+  {
+   "type": "position_integrate_scaled",
+   "fields": [
+    {
+     "name": "position",
+     "kind": "channel"
+    },
+    {
+     "name": "velocity",
+     "kind": "channel"
+    },
+    {
+     "name": "age",
+     "kind": "channel"
+    },
+    {
+     "name": "life",
+     "kind": "channel"
+    },
+    {
+     "name": "scale",
+     "kind": "curve"
+    },
+    {
+     "name": "over_system_lifetime",
+     "kind": "bool"
+    },
+    {
+     "name": "scale_variable",
+     "kind": "int"
+    }
+   ]
+  },
+  {
+   "type": "velocity_accelerate",
+   "fields": [
+    {
+     "name": "velocity",
+     "kind": "channel"
+    },
+    {
+     "name": "acceleration",
+     "kind": "vector3"
+    }
+   ]
+  },
+  {
+   "type": "advance_frame",
+   "fields": [
+    {
+     "name": "channel",
+     "kind": "channel"
+    },
+    {
+     "name": "start",
+     "kind": "int"
+    },
+    {
+     "name": "end",
+     "kind": "int"
+    },
+    {
+     "name": "loop",
+     "kind": "bool"
+    },
+    {
+     "name": "speed",
+     "kind": "float"
+    }
+   ]
+  },
+  {
+   "type": "integrate_float_scaled",
+   "fields": [
+    {
+     "name": "value",
+     "kind": "channel"
+    },
+    {
+     "name": "velocity",
+     "kind": "channel"
+    },
+    {
+     "name": "age",
+     "kind": "channel"
+    },
+    {
+     "name": "life",
+     "kind": "channel"
+    },
+    {
+     "name": "scale",
+     "kind": "curve"
+    }
+   ]
+  },
+  {
+   "type": "plane_collision",
+   "fields": [
+    {
+     "name": "position",
+     "kind": "channel"
+    },
+    {
+     "name": "velocity",
+     "kind": "channel"
+    },
+    {
+     "name": "offset",
+     "kind": "float"
+    },
+    {
+     "name": "restitution",
+     "kind": "float"
+    },
+    {
+     "name": "friction",
+     "kind": "float"
+    }
+   ]
+  },
+  {
+   "type": "rate_spawn",
+   "fields": [
+    {
+     "name": "position",
+     "kind": "channel"
+    },
+    {
+     "name": "spawn",
+     "kind": "channel"
+    },
+    {
+     "name": "particles_per_second",
+     "kind": "float"
+    },
+    {
+     "name": "target_system",
+     "kind": "uint"
+    },
+    {
+     "name": "velocity",
+     "kind": "channel"
+    },
+    {
+     "name": "inherit_velocity",
+     "kind": "float"
+    }
+   ]
+  },
+  {
+   "type": "trail_spawn",
+   "fields": [
+    {
+     "name": "position",
+     "kind": "channel"
+    },
+    {
+     "name": "last_position",
+     "kind": "channel"
+    },
+    {
+     "name": "particles_per_meter",
+     "kind": "float"
+    },
+    {
+     "name": "target_system",
+     "kind": "uint"
+    },
+    {
+     "name": "velocity",
+     "kind": "channel"
+    },
+    {
+     "name": "inherit_velocity",
+     "kind": "float"
+    }
+   ]
+  },
+  {
+   "type": "collision_spawn",
+   "fields": [
+    {
+     "name": "data",
+     "kind": "bytes"
+    }
+   ]
+  },
+  {
+   "type": "wind",
+   "fields": [
+    {
+     "name": "data",
+     "kind": "bytes"
+    }
+   ]
+  },
+  {
+   "type": "warp_box",
+   "fields": [
+    {
+     "name": "data",
+     "kind": "bytes"
+    }
+   ]
+  },
+  {
+   "type": "rate_emitter",
+   "fields": [
+    {
+     "name": "rate_min",
+     "kind": "float"
+    },
+    {
+     "name": "rate_max",
+     "kind": "float"
+    },
+    {
+     "name": "rate",
+     "kind": "curve"
+    }
+   ]
+  },
+  {
+   "type": "burst_emitter",
+   "fields": [
+    {
+     "name": "bursts",
+     "kind": "bursts"
+    }
+   ]
+  },
+  {
+   "type": "grid_collision",
+   "fields": [
+    {
+     "name": "position",
+     "kind": "channel"
+    },
+    {
+     "name": "velocity",
+     "kind": "channel"
+    },
+    {
+     "name": "bounces",
+     "kind": "channel"
+    },
+    {
+     "name": "restitution",
+     "kind": "float"
+    },
+    {
+     "name": "friction",
+     "kind": "float"
+    },
+    {
+     "name": "offset",
+     "kind": "float"
+    },
+    {
+     "name": "grid_size",
+     "kind": "float"
+    },
+    {
+     "name": "grid_cells",
+     "kind": "uint"
+    },
+    {
+     "name": "max_bounces",
+     "kind": "int"
+    },
+    {
+     "name": "state_size",
+     "kind": "uint"
+    }
+   ]
+  },
+  {
+   "type": "fast_forward_static",
+   "fields": [
+    {
+     "name": "data",
+     "kind": "bytes"
+    }
+   ]
+  },
+  {
+   "type": "debug_draw",
+   "fields": [
+    {
+     "name": "data",
+     "kind": "bytes"
+    }
+   ]
+  },
+  {
+   "type": "local_space",
+   "fields": [
+    {
+     "name": "position",
+     "kind": "channel"
+    },
+    {
+     "name": "tangent",
+     "kind": "channel"
+    },
+    {
+     "name": "binormal",
+     "kind": "channel"
+    },
+    {
+     "name": "velocity",
+     "kind": "channel"
+    },
+    {
+     "name": "field_14",
+     "kind": "uint"
+    }
+   ]
+  },
+  {
+   "type": "ray",
+   "fields": [
+    {
+     "name": "position",
+     "kind": "channel"
+    },
+    {
+     "name": "velocity",
+     "kind": "channel"
+    },
+    {
+     "name": "size_y",
+     "kind": "channel"
+    },
+    {
+     "name": "start_variable",
+     "kind": "uint"
+    },
+    {
+     "name": "end_variable",
+     "kind": "uint"
+    }
+   ]
+  },
+  {
+   "type": "copy_variable_to_float",
+   "fields": [
+    {
+     "name": "destination",
+     "kind": "channel"
+    },
+    {
+     "name": "variable",
+     "kind": "uint"
+    },
+    {
+     "name": "component",
+     "kind": "uint"
+    }
+   ]
+  },
+  {
+   "type": "scale_float",
+   "fields": [
+    {
+     "name": "destination",
+     "kind": "channel"
+    },
+    {
+     "name": "scale_by",
+     "kind": "channel"
+    }
+   ]
+  },
+  {
+   "type": "spiral",
+   "fields": [
+    {
+     "name": "position",
+     "kind": "channel"
+    },
+    {
+     "name": "velocity",
+     "kind": "channel"
+    },
+    {
+     "name": "spiral_rotation",
+     "kind": "channel"
+    },
+    {
+     "name": "spiral_speed",
+     "kind": "channel"
+    },
+    {
+     "name": "life",
+     "kind": "channel"
+    },
+    {
+     "name": "age",
+     "kind": "channel"
+    },
+    {
+     "name": "center",
+     "kind": "channel"
+    },
+    {
+     "name": "scale",
+     "kind": "curve"
+    },
+    {
+     "name": "over_system_lifetime",
+     "kind": "bool"
+    },
+    {
+     "name": "use_center",
+     "kind": "bool"
+    }
+   ]
+  },
+  {
+   "type": "query_collision",
+   "fields": [
+    {
+     "name": "position",
+     "kind": "channel"
+    },
+    {
+     "name": "velocity",
+     "kind": "channel"
+    },
+    {
+     "name": "normal",
+     "kind": "channel"
+    },
+    {
+     "name": "offset",
+     "kind": "channel"
+    },
+    {
+     "name": "queries_per_frame",
+     "kind": "uint"
+    }
+   ]
+  },
+  {
+   "type": "collision_resolution",
+   "fields": [
+    {
+     "name": "position",
+     "kind": "channel"
+    },
+    {
+     "name": "velocity",
+     "kind": "channel"
+    },
+    {
+     "name": "collision_plane_normal",
+     "kind": "channel"
+    },
+    {
+     "name": "collision_plane_offset",
+     "kind": "channel"
+    },
+    {
+     "name": "rotation",
+     "kind": "channel"
+    },
+    {
+     "name": "size",
+     "kind": "channel"
+    },
+    {
+     "name": "rotation_mode",
+     "kind": "uint"
+    },
+    {
+     "name": "kill_on_collision",
+     "kind": "bool"
+    },
+    {
+     "name": "restitution",
+     "kind": "float"
+    },
+    {
+     "name": "friction",
+     "kind": "float"
+    }
+   ]
+  },
+  {
+   "type": "integrate_float",
+   "fields": [
+    {
+     "name": "value",
+     "kind": "channel"
+    },
+    {
+     "name": "velocity",
+     "kind": "channel"
+    }
+   ]
+  },
+  {
+   "type": "query_vector_field",
+   "fields": [
+    {
+     "name": "position",
+     "kind": "channel"
+    },
+    {
+     "name": "output",
+     "kind": "channel"
+    },
+    {
+     "name": "vector_field",
+     "kind": "name"
+    }
+   ]
+  },
+  {
+   "type": "air_resistance",
+   "fields": [
+    {
+     "name": "wind_velocity",
+     "kind": "channel"
+    },
+    {
+     "name": "velocity",
+     "kind": "channel"
+    },
+    {
+     "name": "wind_coefficient",
+     "kind": "float"
+    },
+    {
+     "name": "noise_amplitude",
+     "kind": "float"
+    },
+    {
+     "name": "noise_period",
+     "kind": "float"
+    }
+   ]
+  },
+  {
+   "type": "vector_language_program",
+   "fields": [
+    {
+     "name": "data",
+     "kind": "bytes"
+    }
+   ]
+  },
+  {
+   "type": "spline_control_points",
+   "fields": [
+    {
+     "name": "position",
+     "kind": "channel"
+    },
+    {
+     "name": "leap_number",
+     "kind": "channel"
+    },
+    {
+     "name": "age",
+     "kind": "channel"
+    },
+    {
+     "name": "life",
+     "kind": "channel"
+    },
+    {
+     "name": "velocity",
+     "kind": "channel"
+    },
+    {
+     "name": "control_points",
+     "kind": "control_points"
+    },
+    {
+     "name": "fix_count",
+     "kind": "uint"
+    },
+    {
+     "name": "spline_type",
+     "kind": "uint"
+    },
+    {
+     "name": "simulate_velocity",
+     "kind": "byte"
+    },
+    {
+     "name": "normalize_velocity",
+     "kind": "byte"
+    },
+    {
+     "name": "velocity_scale",
+     "kind": "float"
+    },
+    {
+     "name": "apply_system_transform",
+     "kind": "bool"
+    }
+   ]
+  }
+ ],
+ "writers": [
+  {
+   "type": "copy_vector3",
+   "fields": [
+    {
+     "name": "source",
+     "kind": "channel"
+    },
+    {
+     "name": "destination",
+     "kind": "vertex"
+    }
+   ]
+  },
+  {
+   "type": "write_float",
+   "fields": [
+    {
+     "name": "value",
+     "kind": "float"
+    },
+    {
+     "name": "destination",
+     "kind": "vertex"
+    },
+    {
+     "name": "component",
+     "kind": "uint"
+    }
+   ]
+  },
+  {
+   "type": "write_int",
+   "fields": [
+    {
+     "name": "value",
+     "kind": "uint"
+    },
+    {
+     "name": "destination",
+     "kind": "vertex"
+    }
+   ]
+  },
+  {
+   "type": "size",
+   "fields": [
+    {
+     "name": "source",
+     "kind": "channel"
+    },
+    {
+     "name": "age",
+     "kind": "channel"
+    },
+    {
+     "name": "life",
+     "kind": "channel"
+    },
+    {
+     "name": "destination",
+     "kind": "vertex"
+    },
+    {
+     "name": "scale",
+     "kind": "curve"
+    },
+    {
+     "name": "over_system_lifetime",
+     "kind": "bool"
+    },
+    {
+     "name": "component",
+     "kind": "uint"
+    }
+   ]
+  },
+  {
+   "type": "color",
+   "fields": [
+    {
+     "name": "age",
+     "kind": "channel"
+    },
+    {
+     "name": "life",
+     "kind": "channel"
+    },
+    {
+     "name": "opacity",
+     "kind": "curve"
+    },
+    {
+     "name": "gradient",
+     "kind": "gradient"
+    },
+    {
+     "name": "destination",
+     "kind": "vertex"
+    },
+    {
+     "name": "luminance",
+     "kind": "uint"
+    },
+    {
+     "name": "luminance_source",
+     "kind": "channel"
+    }
+   ]
+  },
+  {
+   "type": "copy_float",
+   "fields": [
+    {
+     "name": "source",
+     "kind": "channel"
+    },
+    {
+     "name": "destination",
+     "kind": "vertex"
+    },
+    {
+     "name": "component",
+     "kind": "uint"
+    }
+   ]
+  },
+  {
+   "type": "rotate_by_velocity",
+   "fields": [
+    {
+     "name": "velocity",
+     "kind": "channel"
+    },
+    {
+     "name": "destination",
+     "kind": "vertex"
+    }
+   ]
+  },
+  {
+   "type": "copy_float_and_floor",
+   "fields": [
+    {
+     "name": "source",
+     "kind": "channel"
+    },
+    {
+     "name": "destination",
+     "kind": "vertex"
+    }
+   ]
+  },
+  {
+   "type": "distance_fade",
+   "fields": [
+    {
+     "name": "position",
+     "kind": "channel"
+    },
+    {
+     "name": "color",
+     "kind": "vertex"
+    },
+    {
+     "name": "hdr_color",
+     "kind": "vertex"
+    },
+    {
+     "name": "near_range",
+     "kind": "float"
+    },
+    {
+     "name": "near_fade",
+     "kind": "float"
+    },
+    {
+     "name": "far_range",
+     "kind": "float"
+    },
+    {
+     "name": "far_fade",
+     "kind": "float"
+    }
+   ]
+  },
+  {
+   "type": "opacity_kill",
+   "fields": [
+    {
+     "name": "color",
+     "kind": "vertex"
+    },
+    {
+     "name": "hdr_color",
+     "kind": "vertex"
+    }
+   ]
+  },
+  {
+   "type": "stretch_by_velocity",
+   "fields": [
+    {
+     "name": "velocity",
+     "kind": "channel"
+    },
+    {
+     "name": "destination",
+     "kind": "vertex"
+    },
+    {
+     "name": "velocity_min",
+     "kind": "float"
+    },
+    {
+     "name": "velocity_max",
+     "kind": "float"
+    },
+    {
+     "name": "stretch_min",
+     "kind": "float"
+    },
+    {
+     "name": "stretch_max",
+     "kind": "float"
+    }
+   ]
+  },
+  {
+   "type": "rotation_face_velocity",
+   "fields": [
+    {
+     "name": "velocity",
+     "kind": "channel"
+    },
+    {
+     "name": "tangent",
+     "kind": "vertex"
+    },
+    {
+     "name": "binormal",
+     "kind": "vertex"
+    },
+    {
+     "name": "velocity_threshold",
+     "kind": "float"
+    },
+    {
+     "name": "field_10",
+     "kind": "uint"
+    },
+    {
+     "name": "field_14",
+     "kind": "uint"
+    }
+   ]
+  },
+  {
+   "type": "rotation_align_to_velocity",
+   "fields": [
+    {
+     "name": "velocity",
+     "kind": "channel"
+    },
+    {
+     "name": "tangent",
+     "kind": "vertex"
+    }
+   ]
+  },
+  {
+   "type": "uv_tile",
+   "fields": [
+    {
+     "name": "frame",
+     "kind": "channel"
+    },
+    {
+     "name": "destination",
+     "kind": "vertex"
+    },
+    {
+     "name": "field_08",
+     "kind": "uint"
+    }
+   ]
+  },
+  {
+   "type": "hdr_color",
+   "fields": [
+    {
+     "name": "age",
+     "kind": "channel"
+    },
+    {
+     "name": "life",
+     "kind": "channel"
+    },
+    {
+     "name": "opacity",
+     "kind": "curve"
+    },
+    {
+     "name": "gradient",
+     "kind": "gradient"
+    },
+    {
+     "name": "destination",
+     "kind": "vertex"
+    },
+    {
+     "name": "luminance",
+     "kind": "uint"
+    },
+    {
+     "name": "luminance_source",
+     "kind": "channel"
+    }
+   ]
+  },
+  {
+   "type": "rotation_3d_from_2d",
+   "fields": [
+    {
+     "name": "rotation",
+     "kind": "channel"
+    },
+    {
+     "name": "tangent",
+     "kind": "vertex"
+    },
+    {
+     "name": "binormal",
+     "kind": "vertex"
+    }
+   ]
+  },
+  {
+   "type": "tangent_to_next",
+   "fields": [
+    {
+     "name": "tangent",
+     "kind": "vertex"
+    },
+    {
+     "name": "ribbon_distance",
+     "kind": "vertex"
+    },
+    {
+     "name": "position",
+     "kind": "channel"
+    },
+    {
+     "name": "leap_number",
+     "kind": "channel"
+    },
+    {
+     "name": "anchored_uv",
+     "kind": "uint"
+    }
+   ]
+  },
+  {
+   "type": "snap_to_translation",
+   "fields": [
+    {
+     "name": "ribbon_distance",
+     "kind": "vertex"
+    },
+    {
+     "name": "position",
+     "kind": "channel"
+    },
+    {
+     "name": "anchored_uv",
+     "kind": "uint"
+    }
+   ]
+  },
+  {
+   "type": "local_age",
+   "fields": [
+    {
+     "name": "destination",
+     "kind": "vertex"
+    },
+    {
+     "name": "component",
+     "kind": "uint"
+    },
+    {
+     "name": "age",
+     "kind": "channel"
+    },
+    {
+     "name": "life",
+     "kind": "channel"
+    }
+   ]
+  },
+  {
+   "type": "rotation_3d",
+   "fields": [
+    {
+     "name": "yaw",
+     "kind": "channel"
+    },
+    {
+     "name": "pitch",
+     "kind": "channel"
+    },
+    {
+     "name": "roll",
+     "kind": "channel"
+    },
+    {
+     "name": "destination",
+     "kind": "vertex"
+    }
+   ]
+  },
+  {
+   "type": "scale_3d",
+   "fields": [
+    {
+     "name": "size_x",
+     "kind": "channel"
+    },
+    {
+     "name": "size_y",
+     "kind": "channel"
+    },
+    {
+     "name": "size_z",
+     "kind": "channel"
+    },
+    {
+     "name": "scale_x",
+     "kind": "curve"
+    },
+    {
+     "name": "scale_y",
+     "kind": "curve"
+    },
+    {
+     "name": "scale_z",
+     "kind": "curve"
+    },
+    {
+     "name": "age",
+     "kind": "channel"
+    },
+    {
+     "name": "life",
+     "kind": "channel"
+    },
+    {
+     "name": "destination",
+     "kind": "vertex"
+    }
+   ]
+  }
+ ],
+ "visualizers": [
+  {
+   "type": "billboard",
+   "fields": [
+    {
+     "name": "material",
+     "kind": "resource"
+    },
+    {
+     "name": "sort",
+     "kind": "bool"
+    },
+    {
+     "name": "mode",
+     "kind": "uint"
+    },
+    {
+     "name": "field_f8",
+     "kind": "uint"
+    }
+   ]
+  },
+  {
+   "type": "light",
+   "fields": [
+    {
+     "name": "light_type",
+     "kind": "uint"
+    },
+    {
+     "name": "flags",
+     "kind": "uint"
+    },
+    {
+     "name": "falloff_start",
+     "kind": "float"
+    },
+    {
+     "name": "falloff_end",
+     "kind": "float"
+    },
+    {
+     "name": "spot_angle_start",
+     "kind": "float"
+    },
+    {
+     "name": "spot_angle_end",
+     "kind": "float"
+    },
+    {
+     "name": "volumetric_intensity",
+     "kind": "float"
+    },
+    {
+     "name": "field_e8",
+     "kind": "float"
+    }
+   ]
+  },
+  {
+   "type": "mesh",
+   "fields": [
+    {
+     "name": "unit",
+     "kind": "resource"
+    },
+    {
+     "name": "field_08",
+     "kind": "uint"
+    },
+    {
+     "name": "field_10",
+     "kind": "resource"
+    },
+    {
+     "name": "flag_1c",
+     "kind": "uint"
+    },
+    {
+     "name": "field_fc",
+     "kind": "uint"
+    }
+   ]
+  },
+  {
+   "type": "ribbon",
+   "fields": [
+    {
+     "name": "material",
+     "kind": "resource"
+    },
+    {
+     "name": "field_14",
+     "kind": "uint"
+    },
+    {
+     "name": "leap_number",
+     "kind": "channel"
+    }
+   ]
+  },
+  {
+   "type": "gpu",
+   "fields": [
+    {
+     "name": "name",
+     "kind": "name"
+    },
+    {
+     "name": "material",
+     "kind": "resource"
+    },
+    {
+     "name": "name_2",
+     "kind": "name"
+    },
+    {
+     "name": "material_2",
+     "kind": "resource"
+    },
+    {
+     "name": "name_3",
+     "kind": "name"
+    },
+    {
+     "name": "material_3",
+     "kind": "resource"
+    },
+    {
+     "name": "field_40",
+     "kind": "name"
+    },
+    {
+     "name": "field_44",
+     "kind": "name"
+    },
+    {
+     "name": "field_48",
+     "kind": "name"
+    },
+    {
+     "name": "flags_50",
+     "kind": "uint"
+    },
+    {
+     "name": "field_54",
+     "kind": "uint"
+    },
+    {
+     "name": "field_58",
+     "kind": "uint"
+    },
+    {
+     "name": "field_5c",
+     "kind": "float"
+    },
+    {
+     "name": "field_60",
+     "kind": "float"
+    },
+    {
+     "name": "field_64",
+     "kind": "float"
+    },
+    {
+     "name": "field_68",
+     "kind": "float"
+    },
+    {
+     "name": "field_6c",
+     "kind": "float"
+    },
+    {
+     "name": "field_70",
+     "kind": "uint"
+    },
+    {
+     "name": "field_74",
+     "kind": "uint"
+    },
+    {
+     "name": "field_78",
+     "kind": "uint"
+    },
+    {
+     "name": "field_7c",
+     "kind": "uint"
+    },
+    {
+     "name": "field_80",
+     "kind": "name"
+    },
+    {
+     "name": "field_84",
+     "kind": "uint"
+    }
+   ]
+  }
+ ]
+}

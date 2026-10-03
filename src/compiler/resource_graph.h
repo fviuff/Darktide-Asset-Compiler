@@ -15,10 +15,23 @@ struct TextureResource {
     stingray::texture::ImageRGBA image;
     stingray::texture::TextureProfile profile;
 };
+// A copy of one of the game's textures: its kind-1 body and, when it has streamed mips, their stream.
+struct PreservedTexture {
+    std::vector<std::uint8_t> body;
+    std::vector<std::uint8_t> stream;
+};
+// A particles resource body (version 102).
+struct ParticlesResource {
+    std::vector<std::uint8_t> body;
+};
+// A copy of one of the game's units (a mesh particle effects draw), its materials renamed to owned copies.
+struct PreservedUnit {
+    std::vector<std::uint8_t> body;
+};
 using NativeResource = std::variant<stingray::unit::UnitResource,
     stingray::bones::BonesResource, stingray::animation::BuiltAnimation,
     stingray::material::MaterialStream, stingray::material::PreservedMaterialStream,
-    TextureResource, std::vector<std::uint8_t>>;
+    TextureResource, std::vector<std::uint8_t>, PreservedTexture, ParticlesResource, PreservedUnit>;
 struct OwnedResourceNode {
     ResourceKey key;
     std::string file;

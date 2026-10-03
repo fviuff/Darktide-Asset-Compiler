@@ -37,8 +37,11 @@ struct WriteOptions {
     // Consume scene-authored compound collision unless physics was disabled.
     // An explicit fitted_physics override takes precedence.
     bool authored_physics = true;
+    // Ragdoll handoff: collection-only bodies, dynamic ones disabled until the
+    // state machine's ragdoll state creates them (no duplicate UNIT records).
+    bool ragdoll_handoff = false;
 
-    // Proven ordinary visible inline mesh profile from current Darktide corpus.
+    // Ordinary visible inline mesh, as the game's own units write it.
     std::uint32_t mesh_flags = 0x000c2003u;
 };
 

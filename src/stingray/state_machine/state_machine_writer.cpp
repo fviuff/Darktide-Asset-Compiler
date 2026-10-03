@@ -48,6 +48,144 @@ private:
     std::size_t position_ = 0;
 };
 
+// Root constraint table: u32 count, u32 record offsets from the table start, records.
+void write_constraint_table(BinaryWriter& body, const std::vector<BoneConstraint>& constraints) {
+    constexpr std::uint32_t kPendulumSize = 0x84, kSpringSize = 0x9c;
+    const auto size_of = [](const BoneConstraint& c) {
+        return c.kind == BoneConstraint::Kind::Spring ? kSpringSize : kPendulumSize;
+    };
+    const auto count = static_cast<std::uint32_t>(constraints.size());
+    std::uint32_t total = 4 + count * 4;
+    for (const auto& c : constraints) total += size_of(c);
+    body.u32(total);
+    body.u32(count);
+    std::uint32_t offset = 4 + count * 4;
+    for (const auto& c : constraints) { body.u32(offset); offset += size_of(c); }
+    for (const auto& c : constraints) {
+        if (c.kind == BoneConstraint::Kind::Spring) {
+            body.u32(4);                                // spring
+            body.u32(1);                                // as in every retail record
+            body.u32(0);                                // no debug draw
+            body.u32(c.bone_slot);
+            body.u32(c.bone_slot);                      // tracked + written bone
+            body.u32(0);                                // free (no ground plane)
+            for (std::uint32_t slot = 0; slot < 11; ++slot) body.u32(slot * 2);
+            for (float value : {c.mass, c.gravity, c.stiffness, c.damping, c.max_stretch,
+                                0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}) {
+                body.f32(value);
+                body.u32(0x7fa00000u);
+            }
+            continue;
+        }
+        body.u32(2);                                    // pendulum
+        body.u32(1);                                    // enabled
+        body.u32(1);                                    // as in every retail record
+        body.u32(c.bone_slot);
+        body.u32(c.max_angle_degrees > 0.0f ? 2u : 1u); // limit shape: cone when an angle is given
+        body.u32(0);                                    // keep the pull toward the rest axis
+        for (std::uint32_t slot = 0; slot < 9; ++slot) body.u32(slot * 2);
+        for (float value : {c.angle_offset_degrees, c.mass, c.length, c.gravity, c.damping, 0.0f,
+                            c.rest_stiffness, c.max_angle_degrees, c.world_collision}) {
+            body.f32(value);
+            body.u32(0x7fa00000u);                      // constant expression
+        }
+    }
+}
+
+// The engine appends every constraint a state applies to a fixed per-layer array without a bounds check
+// (animation_state_machine.cpp, +0x4b0 count / +0x4b8 entries). Retail never lists more than 4 in a state
+// (1724 state machines; up to 47 constraints each): the rest go into extra layers, one state each playing the
+// same clip, with a bone row that selects only the constrained bones. More than 4 in one state overran that
+// array and corrupted the heap (crash when the unit was destroyed).
+constexpr std::size_t kConstraintsPerState = 4;
+
+// Constraint index lists: [0] for the authored states, then one per extra layer.
+std::vector<std::vector<std::uint32_t>> constraint_layers(std::size_t count) {
+    std::vector<std::vector<std::uint32_t>> layers(1);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        if (layers.back().size() == kConstraintsPerState) layers.emplace_back();
+        layers.back().push_back(i);
+    }
+    return layers;
+}
+
+void write_state_constraint_indices(BinaryWriter& body, const std::vector<std::uint32_t>& indices) {
+    body.u32(static_cast<std::uint32_t>(indices.size()));
+    for (const auto index : indices) body.u32(index);
+}
+
+// One looping clip state; bone_row 0xffffffff = whole body.
+void write_clip_state(BinaryWriter& body, std::uint64_t state_id, std::uint64_t animation_hash, bool looping,
+                      std::uint32_t bone_row, const std::vector<std::uint32_t>& constraints) {
+    body.u64(state_id); body.u64(state_id); body.u64(state_id);
+    body.u32(0);                                     // state type: clip
+    body.u32(1); body.u64(animation_hash);
+    body.u32(1); body.u32(0x3f800000u);              // threshold 1
+    body.u32(1); body.u8(looping ? 1 : 0); body.u32(0);
+    body.u32(0); body.u32(0); body.u32(0);           // events, transitions, selectors
+    body.u32(0); body.u32(2);
+    body.u32(0);                                     // triples
+    body.u32(0); body.u32(0);
+    body.u32(6);                                     // start, end and speed constant expressions
+    body.u32(0); body.u32(0x7fa00000u); body.u32(0xbf800000u);
+    body.u32(0x7fa00000u); body.u32(0x3f800000u); body.u32(0x7fa00000u);
+    body.u32(0);                                     // expression starts
+    body.u32(4); body.u32(0); body.u32(3);
+    body.u32(bone_row);
+    write_state_constraint_indices(body, constraints);
+    body.u32(0); body.u32(0);
+    body.u32(0xffffffffu);                           // no actor set
+}
+
+// Extra layers (after the authored group): one state each, same clip, its bone row selecting its bones.
+void write_constraint_layer_groups(BinaryWriter& body, const std::vector<std::vector<std::uint32_t>>& layers,
+                                   std::uint64_t animation_hash) {
+    for (std::size_t layer = 1; layer < layers.size(); ++layer) {
+        body.u32(1); // states in group
+        write_clip_state(body, id64("constraint_layer_" + std::to_string(layer)), animation_hash, true,
+                         static_cast<std::uint32_t>(layer - 1), layers[layer]);
+        body.u32(0); // group fallback state
+    }
+}
+
+// Bone rows: weight per BONES slot as an index into a constant table [0.0, 1.0].
+void write_constraint_bone_rows(BinaryWriter& body, const std::vector<std::vector<std::uint32_t>>& layers,
+                                const std::vector<BoneConstraint>& constraints, std::uint32_t bone_count) {
+    body.u32(static_cast<std::uint32_t>(layers.size() - 1));
+    for (std::size_t layer = 1; layer < layers.size(); ++layer) {
+        body.u32(4); body.u32(0); body.u32(0x7fa00000u); body.u32(0x3f800000u); body.u32(0x7fa00000u);
+        std::vector<std::uint32_t> weights(bone_count, 0);
+        for (const auto index : layers[layer]) weights[constraints[index].bone_slot] = 2;
+        body.u32(bone_count);
+        for (const auto weight : weights) body.u32(weight);
+        body.u8(1);
+    }
+}
+
+bool valid_constraints(const std::vector<BoneConstraint>& constraints, std::uint32_t bone_count, std::string& error) {
+    for (const auto& c : constraints) {
+        if (c.bone_slot >= bone_count) {
+            error = "STATE_MACHINE bone constraint slot is outside the BONES list";
+            return false;
+        }
+        for (float v : {c.angle_offset_degrees, c.mass, c.length, c.gravity, c.damping, c.rest_stiffness,
+                        c.max_angle_degrees, c.world_collision, c.stiffness, c.max_stretch})
+            if (!std::isfinite(v)) { error = "STATE_MACHINE bone constraint values must be finite"; return false; }
+        if (c.kind == BoneConstraint::Kind::Spring) {
+            if (c.mass <= 0.0f || c.stiffness < 0.0f || c.damping < 0.0f || c.max_stretch <= 0.0f) {
+                error = "STATE_MACHINE jiggle needs positive mass and max stretch, nonnegative stiffness and damping";
+                return false;
+            }
+            continue;
+        }
+        if (c.mass <= 0.0f || c.length <= 0.0f || c.damping < 0.0f || c.max_angle_degrees < 0.0f) {
+            error = "STATE_MACHINE pendulum needs positive mass and length, nonnegative damping and angle";
+            return false;
+        }
+    }
+    return true;
+}
+
 bool expect_u8(Reader& reader, std::uint8_t expected) {
     std::uint8_t value{};
     return reader.u8(value) && value == expected;
@@ -171,8 +309,19 @@ bool make_direct_body(const std::vector<DirectEventState>& states,
                       const std::vector<DirectEventTransition>& transitions,
                       const std::vector<DirectEventVariable>& variables,
                       const std::vector<DirectEventSelector>& selectors,
+                      const std::vector<BoneConstraint>& constraints,
+                      std::uint32_t bone_count,
+                      const std::vector<std::uint32_t>& ragdoll_actor_names,
                       std::vector<std::uint8_t>& output, std::string& error) {
     if (states.empty()) { error = "STATE_MACHINE requires at least one authored state"; return false; }
+    if (!valid_constraints(constraints, bone_count, error)) return false;
+    const auto layers = constraint_layers(constraints.size());
+    const auto clip_state = std::find_if(states.begin(), states.end(), [](const auto& s) { return !s.ragdoll; });
+    const bool has_ragdoll_state = std::any_of(states.begin(), states.end(), [](const auto& s) { return s.ragdoll; });
+    if (has_ragdoll_state != !ragdoll_actor_names.empty()) {
+        error = "STATE_MACHINE ragdoll states need a ragdoll actor set and vice versa";
+        return false;
+    }
     std::set<std::string> names;
     std::map<std::uint32_t, std::string> event_names;
     std::vector<std::uint32_t> event_hashes;
@@ -186,8 +335,8 @@ bool make_direct_body(const std::vector<DirectEventState>& states,
             error = "STATE_MACHINE state names must be unique and nonempty";
             return false;
         }
-        if (state.animation_resource_name.empty()) {
-            error = "STATE_MACHINE state animation resource name must be nonempty";
+        if (state.animation_resource_name.empty() != state.ragdoll) {
+            error = "STATE_MACHINE clip states need an animation and ragdoll states none";
             return false;
         }
     }
@@ -306,16 +455,23 @@ bool make_direct_body(const std::vector<DirectEventState>& states,
     std::sort(event_hashes.begin(), event_hashes.end());
 
     BinaryWriter body;
-    body.u32(1); // one group
+    body.u32(static_cast<std::uint32_t>(layers.size())); // authored group + constraint layers
     body.u32(static_cast<std::uint32_t>(states.size()));
     for (std::size_t state_index = 0; state_index < states.size(); ++state_index) {
         const auto& state = states[state_index];
         const auto state_id = id64(state.name);
         body.u64(state_id); body.u64(state_id); body.u64(state_id);
-        body.u32(0); // state word after identity
-        body.u32(1); body.u64(resource_name_hash(state.animation_resource_name));
-        body.u32(1); body.u32(0x3f800000u); // one animation, threshold 1
-        body.u32(1); body.u8(state.looping ? 1 : 0); body.u32(0);
+        if (state.ragdoll) {
+            body.u32(4);         // state type: ragdoll
+            body.u32(0);         // no animations
+            body.u32(0);         // no thresholds
+            body.u32(1); body.u8(1); body.u32(0);
+        } else {
+            body.u32(0); // state type: clip
+            body.u32(1); body.u64(resource_name_hash(state.animation_resource_name));
+            body.u32(1); body.u32(0x3f800000u); // one animation, threshold 1
+            body.u32(1); body.u8(state.looping ? 1 : 0); body.u32(0);
+        }
         body.u32(static_cast<std::uint32_t>(state_transitions[state_index].size() -
             std::count_if(state_transitions[state_index].begin(), state_transitions[state_index].end(),
                 [&selected_transitions](std::size_t index) { return selected_transitions.count(index) != 0; }) +
@@ -337,10 +493,8 @@ bool make_direct_body(const std::vector<DirectEventState>& states,
             body.u32(static_cast<std::uint32_t>(local_selector_index));
             body.u8(1); // selector event binding
         }
-        // Retail transitions reference a constant 0.0 expression (appended after the
-        // selector expressions below); 0xffffffff here makes the runtime drop the
-        // whole state machine (unit reports no state machine).
-        // event graphs still dont work in game even with this, so something else is off too
+        // Retail transitions reference a constant 0.0 expression, appended after the
+        // selector expressions below.
         const bool has_transitions = !state_transitions[state_index].empty();
         const auto transition_expression = static_cast<std::uint32_t>(6 + state_selectors[state_index].size() * 2);
         body.u32(static_cast<std::uint32_t>(state_transitions[state_index].size()));
@@ -384,10 +538,16 @@ bool make_direct_body(const std::vector<DirectEventState>& states,
         body.u32(0); // expression starts
         body.u32(4); body.u32(0); body.u32(3);
         body.u32(0xffffffffu); // no bone row
-        body.u32(0); // constraint indices
-        body.u32(0); body.u32(0); body.u32(0xffffffffu);
+        write_state_constraint_indices(body, state.ragdoll ? std::vector<std::uint32_t>{} : layers[0]);
+        body.u32(0); body.u32(0);
+        body.u32(state.ragdoll ? 0u : 0xffffffffu); // actor set 0 for the ragdoll state
     }
     body.u32(0); // initial fallback state
+    if (layers.size() > 1 && clip_state == states.end()) {
+        error = "STATE_MACHINE constraint layers need a clip state";
+        return false;
+    }
+    if (layers.size() > 1) write_constraint_layer_groups(body, layers, resource_name_hash(clip_state->animation_resource_name));
     body.u32(static_cast<std::uint32_t>(event_hashes.size()));
     for (const auto event_hash : event_hashes) body.u32(event_hash);
     body.u32(static_cast<std::uint32_t>(1 + variables.size()));
@@ -405,8 +565,19 @@ bool make_direct_body(const std::vector<DirectEventState>& states,
         std::memcpy(&maximum_bits, &variable.maximum, sizeof(maximum_bits));
         body.u32(minimum_bits); body.u32(maximum_bits);
     }
-    body.u32(0); body.u32(0); body.u32(0);
-    body.u32(4); body.u32(0); body.u32(0); body.u32(0);
+    write_constraint_bone_rows(body, layers, constraints, bone_count);
+    body.u32(0); body.u32(0); // constraint target names and positions
+    write_constraint_table(body, constraints);
+    // Actor sets: list A is created and set simulating when the ragdoll state is entered.
+    if (ragdoll_actor_names.empty()) {
+        body.u32(0);
+    } else {
+        body.u32(1);
+        body.u32(static_cast<std::uint32_t>(ragdoll_actor_names.size()));
+        for (const auto name : ragdoll_actor_names) body.u32(name);
+        body.u32(0);
+    }
+    body.u32(0); // base matches
     body.u32(0xbf800000u);
     output = body.data();
     error.clear();
@@ -427,13 +598,17 @@ std::vector<std::uint8_t> write_direct_event_state_machine(
     const std::vector<DirectEventState>& states,
     const std::vector<DirectEventTransition>& transitions,
     const std::vector<DirectEventVariable>& variables,
-    const std::vector<DirectEventSelector>& selectors) {
+    const std::vector<DirectEventSelector>& selectors,
+    const std::vector<BoneConstraint>& constraints,
+    std::uint32_t bone_count,
+    const std::vector<std::uint32_t>& ragdoll_actor_names) {
     std::vector<std::uint8_t> body;
     std::string error;
-    if (!make_direct_body(states, transitions, variables, selectors, body, error))
+    if (!make_direct_body(states, transitions, variables, selectors, constraints, bone_count, ragdoll_actor_names, body, error))
         throw std::invalid_argument(error);
     auto result = wrap_cooked_resource(kTypeName, resource_name, body);
-    if (!validate_direct_event_state_machine(result, resource_name, states, transitions, variables, selectors, error))
+    if (!validate_direct_event_state_machine(result, resource_name, states, transitions, variables, selectors, error,
+                                             constraints, bone_count, ragdoll_actor_names))
         throw std::logic_error("generated direct-event STATE_MACHINE failed self-validation: " + error);
     return result;
 }
@@ -454,9 +629,13 @@ bool validate_direct_event_state_machine(
     const std::vector<DirectEventTransition>& transitions,
     const std::vector<DirectEventVariable>& variables,
     const std::vector<DirectEventSelector>& selectors,
-    std::string& error) {
+    std::string& error,
+    const std::vector<BoneConstraint>& constraints,
+    std::uint32_t bone_count,
+    const std::vector<std::uint32_t>& ragdoll_actor_names) {
     std::vector<std::uint8_t> expected_body;
-    if (!make_direct_body(states, transitions, variables, selectors, expected_body, error)) return false;
+    if (!make_direct_body(states, transitions, variables, selectors, constraints, bone_count, ragdoll_actor_names, expected_body, error))
+        return false;
     std::vector<std::uint8_t> actual_body;
     std::string stream_name;
     if (!parse_cooked_resource_envelope(bytes, kTypeName, actual_body, stream_name, error)) return false;
@@ -489,24 +668,33 @@ bool validate_direct_event_state_machine_dependencies(
     if (name_hash != resource_name_hash(resource_name)) { error = "cooked STATE_MACHINE name hash mismatch"; return false; }
 
     Reader reader(body);
-    std::uint32_t groups{}, states{};
-    if (!reader.u32(groups) || groups != 1 || !reader.u32(states) || states == 0) {
-        error = "direct-event STATE_MACHINE must contain one nonempty group";
+    std::uint32_t groups{};
+    if (!reader.u32(groups) || groups == 0) {
+        error = "direct-event STATE_MACHINE must contain a group";
         return false;
     }
     std::set<std::uint64_t> referenced, expected;
-    for (std::uint32_t i = 0; i < states; ++i) {
-        std::vector<std::uint64_t> animations;
-        if (!skip_direct_state(reader, animations) || animations.size() != 1) {
-            error = "direct-event STATE_MACHINE contains an invalid state animation list";
+    // the authored group, then single-state constraint layers
+    for (std::uint32_t group = 0; group < groups; ++group) {
+        std::uint32_t states{};
+        if (!reader.u32(states) || states == 0 || (group > 0 && states != 1)) {
+            error = "direct-event STATE_MACHINE has an empty group or a constraint layer with more than one state";
             return false;
         }
-        referenced.insert(animations.front());
-    }
-    std::uint32_t fallback{};
-    if (!reader.u32(fallback) || fallback >= states) {
-        error = "direct-event STATE_MACHINE initial state is out of range";
-        return false;
+        for (std::uint32_t i = 0; i < states; ++i) {
+            std::vector<std::uint64_t> animations;
+            // Clip states carry one animation; ragdoll states none.
+            if (!skip_direct_state(reader, animations) || animations.size() > 1) {
+                error = "direct-event STATE_MACHINE contains an invalid state animation list";
+                return false;
+            }
+            if (!animations.empty()) referenced.insert(animations.front());
+        }
+        std::uint32_t fallback{};
+        if (!reader.u32(fallback) || fallback >= states) {
+            error = "direct-event STATE_MACHINE initial state is out of range";
+            return false;
+        }
     }
     // Consume the root tables emitted by this bounded writer and require exact EOF.
     std::uint32_t count{}, ignored{};
@@ -569,49 +757,22 @@ std::vector<std::uint8_t> write_minimal_looping_state_machine(
 std::vector<std::uint8_t> write_minimal_single_clip_state_machine(
     std::string_view resource_name,
     std::string_view animation_resource_name,
-    bool looping) {
+    bool looping,
+    const std::vector<BoneConstraint>& constraints,
+    std::uint32_t bone_count) {
+    {
+        std::string error;
+        if (!valid_constraints(constraints, bone_count, error)) throw std::invalid_argument(error);
+    }
+    const auto layers = constraint_layers(constraints.size());
+    const auto animation_hash = resource_name_hash(animation_resource_name);
     BinaryWriter body;
 
-    body.u32(1); // groups
+    body.u32(static_cast<std::uint32_t>(layers.size())); // groups: the clip + constraint layers
     body.u32(1); // states in group
-
-    body.u64(id64(kStateName));
-    body.u64(id64(kStateName));
-    body.u64(id64(kStateName));
-    body.u32(0); // state word after identity
-    body.u32(1); // animation count
-    body.u64(resource_name_hash(animation_resource_name));
-    body.u32(1); // threshold count
-    body.u32(0x3f800000u); // threshold = 1.0f
-    body.u32(1); // policy
-    body.u8(looping ? 1 : 0);  // looping
-    body.u32(0);
-    body.u32(0); // events
-    body.u32(0); // transitions
-    body.u32(0); // selectors
-    body.u32(0);
-    body.u32(2);
-    body.u32(0); // triples
-    body.u32(0);
-    body.u32(0);
-    body.u32(6); // start, end and speed constant expressions
-    body.u32(0); // start time = 0.0f
-    body.u32(0x7fa00000u);
-    body.u32(0xbf800000u);
-    body.u32(0x7fa00000u);
-    body.u32(0x3f800000u);
-    body.u32(0x7fa00000u);
-    body.u32(0); // expression starts
-    body.u32(4);
-    body.u32(0);
-    body.u32(3);
-    body.u32(0xffffffffu); // no bone row
-    body.u32(0); // constraint indices
-    body.u32(0);
-    body.u32(0);
-    body.u32(0xffffffffu);
-
+    write_clip_state(body, id64(kStateName), animation_hash, looping, 0xffffffffu, layers[0]);
     body.u32(0); // group fallback state
+    write_constraint_layer_groups(body, layers, animation_hash);
     body.u32(0); // root events
     body.u32(1); // variable name count
     body.u32(id32_from_id64(kLengthVariable));
@@ -620,11 +781,10 @@ std::vector<std::uint8_t> write_minimal_single_clip_state_machine(
     body.u32(1); // variable min/max count
     body.u32(0xff7fffffu); // -FLT_MAX
     body.u32(0x7f7fffffu);  // FLT_MAX
-    body.u32(0); // bone rows
+    write_constraint_bone_rows(body, layers, constraints, bone_count);
     body.u32(0); // constraint target names
     body.u32(0); // constraint target positions
-    body.u32(4); // constraint byte-vector size
-    body.u32(0); // empty constraint table
+    write_constraint_table(body, constraints);
     body.u32(0); // actor sets
     body.u32(0); // base matches
     body.u32(0xbf800000u); // fallback blend time = -1.0f
@@ -634,7 +794,11 @@ std::vector<std::uint8_t> write_minimal_single_clip_state_machine(
     std::vector<std::uint8_t> checked_body;
     std::string stream_name;
     if (!parse_cooked_resource_envelope(result, kTypeName, checked_body, stream_name, error) ||
-        !stream_name.empty() || !validate_body(checked_body, animation_resource_name, looping)) {
+        !stream_name.empty() ||
+        !(constraints.empty()
+              ? validate_body(checked_body, animation_resource_name, looping)
+              : validate_direct_event_state_machine_dependencies(
+                    result, resource_name, {std::string(animation_resource_name)}, error))) {
         if (error.empty()) error = "STATE_MACHINE body does not match the requested single-clip shape";
         throw std::logic_error("generated STATE_MACHINE failed self-validation: " + error);
     }

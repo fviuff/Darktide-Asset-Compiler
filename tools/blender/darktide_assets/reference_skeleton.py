@@ -145,6 +145,11 @@ def _parse_unit(blob):
     if unknown_count > 1_000_000:
         raise ReferenceSkeletonError("UNIT contains an implausible trailing pair count")
     reader.take(unknown_count * 8)
+    mesh_count = reader.u32()
+    if mesh_count > 1_000_000:
+        raise ReferenceSkeletonError("UNIT contains an implausible mesh object count")
+    # MeshObject: name, node, geometry, skin, 3 flags words, 40-byte bounds, 1 word
+    mesh_nodes = {struct.unpack_from("<I", reader.take(72), 4)[0] for _ in range(mesh_count)}
     nodes = []
     for index, ((rotation, position, scale), world, (parent_type, parent_index), name_hash) in enumerate(
             zip(local_transforms, worlds, parents, hashes)):
@@ -153,7 +158,7 @@ def _parse_unit(blob):
         if parent_type == 1 and parent_index >= count:
             raise ReferenceSkeletonError("UNIT scene graph has an invalid parent index")
         nodes.append({"index": index, "hash": name_hash, "parent_type": parent_type,
-                      "parent_index": parent_index, "world": world})
+                      "parent_index": parent_index, "world": world, "mesh": index in mesh_nodes})
     return nodes
 
 

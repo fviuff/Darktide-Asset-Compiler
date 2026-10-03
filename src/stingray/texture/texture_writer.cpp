@@ -332,6 +332,13 @@ public:
         return true;
     }
 
+    bool decompress(const std::uint8_t* input, std::size_t size, std::vector<std::uint8_t>& output, std::string& error) const {
+        const auto decoded = decompress_(input, static_cast<long long>(size), output.data(), static_cast<long long>(output.size()),
+                                         1, 0, 0, nullptr, 0, nullptr, nullptr, nullptr, 0, 3);
+        if (decoded != static_cast<long long>(output.size())) { error = "Oodle could not unpack the texture"; return false; }
+        return true;
+    }
+
 private:
     HMODULE module_ = nullptr;
     BoundFn bound_ = nullptr;
@@ -390,6 +397,33 @@ bool configure_oodle(const std::filesystem::path& dll_or_game_directory, std::st
     error = "Oodle configuration is available only on Windows";
     return false;
 #endif
+}
+
+std::filesystem::path game_root() {
+#ifdef _WIN32
+    // same places the oodle dll is looked up, the dll lives in <game>/binaries
+    const auto env_path = [](const wchar_t* name) -> std::filesystem::path {
+        const DWORD needed = GetEnvironmentVariableW(name, nullptr, 0);
+        if (!needed) return {};
+        std::vector<wchar_t> value(needed);
+        const DWORD copied = GetEnvironmentVariableW(name, value.data(), needed);
+        return copied && copied < needed ? std::filesystem::path(value.data()) : std::filesystem::path{};
+    };
+    std::error_code ec;
+    if (auto root = env_path(L"DARKTIDE_GAME_ROOT"); !root.empty()) return root;
+    if (const auto config = oodle_config_file(); !config.empty()) {
+        std::ifstream saved(config, std::ios::binary);
+        std::string utf8_path;
+        if (saved && std::getline(saved, utf8_path) && !utf8_path.empty() && utf8_path.find('\0') == std::string::npos) {
+            const auto dll = std::filesystem::u8path(utf8_path);
+            const auto root = dll.parent_path().parent_path();
+            if (std::filesystem::is_directory(root / L"bundle", ec)) return root;
+        }
+    }
+    if (const auto program_files = env_path(L"ProgramFiles(x86)"); !program_files.empty())
+        return program_files / L"Steam" / L"steamapps" / L"common" / L"Warhammer 40,000 DARKTIDE";
+#endif
+    return {};
 }
 
 const TextureProfile& substance_basic_bc_profile(){return kSubstanceBc;}
@@ -591,6 +625,150 @@ bool write_native_texture_rgba(const ImageRGBA& source,const TextureProfile& pro
     std::string inspection;
     if(!inspect_texture_blob(cooked,inspection,error)){error="internal texture validation failed: "+error;return false;}
     if(!write_file(texture_path,cooked,error)||!write_file(stream_path,stream,error))return false;out={resource,stream_name,texture_path,stream_path,profile.id,source.width,source.height,base.width,base.height,static_cast<std::uint32_t>(mips.size()),static_cast<std::uint32_t>(sc),static_cast<std::uint32_t>(cumulative.size()),static_cast<std::uint32_t>(dds.size()),normalized};return true;
+}
+
+bool texture_body_as_kind1(const std::vector<std::uint8_t>& body,std::vector<std::uint8_t>& out,std::string& error){
+    auto u32=[&](std::size_t at){std::uint32_t v=0;std::memcpy(&v,body.data()+at,4);return v;};
+    if(body.size()<12){error="texture body is truncated";return false;}
+    if(u32(0)==1){out=body;return true;}
+    // kind 0: [0][0][0] DDS, 148-byte mip block (marker 67), one zero word, footer
+    constexpr std::size_t tail=148+4+4;
+    if(u32(0)!=0||u32(4)||u32(8)||body.size()<12+128+tail||std::memcmp(body.data()+12,"DDS ",4)!=0||
+       u32(body.size()-tail)!=67||u32(body.size()-8)!=0){error="texture body is neither kind 0 nor kind 1";return false;}
+    const std::vector<std::uint8_t> dds(body.begin()+12,body.end()-static_cast<std::ptrdiff_t>(tail));
+#ifdef _WIN32
+    DarktideOodle oodle;if(!oodle.load(error))return false;
+    std::vector<std::uint8_t> packed;if(!oodle.compress_roundtrip(dds,packed,"texture DDS",error))return false;
+#else
+    error="repacking textures requires Darktide's Windows Oodle DLL";return false;
+#endif
+    out.clear();append(out,std::uint32_t{1});append(out,static_cast<std::uint32_t>(packed.size()));append(out,static_cast<std::uint32_t>(dds.size()));append_bytes(out,packed);
+    out.insert(out.end(),body.end()-static_cast<std::ptrdiff_t>(tail),body.end()-8);
+    append(out,std::uint32_t{8});append(out,std::uint32_t{0});append(out,std::uint32_t{0}); // chunk meta: none
+    out.insert(out.end(),body.end()-4,body.end());
+    return true;
+}
+
+bool encode_texture_like(const ImageRGBA& source, const std::vector<std::uint8_t>& game_body,
+                         std::vector<std::uint8_t>& body, std::string& error) {
+#ifdef DTGLB_USE_DIRECTXTEX
+    const auto u32 = [&](std::size_t at) { std::uint32_t v = 0; std::memcpy(&v, game_body.data() + at, 4); return v; };
+    if (game_body.size() < 12 + 156) { error = "the game's texture body is truncated"; return false; }
+    // kind 1: [1][packed][dds size] Oodle-packed DDS; kind 0: [0][0][0] plain DDS. Then the mip block (marker 67),
+    // the chunk metadata and the footer.
+    DarktideOodle oodle;
+    if (!oodle.load(error)) return false;
+    std::vector<std::uint8_t> dds;
+    std::size_t tail = 0;
+    if (u32(0) == 1) {
+        const std::size_t packed = u32(4);
+        dds.resize(u32(8));
+        if (12 + packed + 148 > game_body.size() || !oodle.decompress(game_body.data() + 12, packed, dds, error)) return false;
+        tail = 12 + packed;
+    } else {
+        tail = game_body.size() - 156;
+        dds.assign(game_body.begin() + 12, game_body.begin() + static_cast<std::ptrdiff_t>(tail));
+    }
+    if (dds.size() < 128 || std::memcmp(dds.data(), "DDS ", 4) != 0 || u32(tail) != 67) {
+        error = "the game's texture does not hold a DDS image";
+        return false;
+    }
+    const auto d32 = [&](std::size_t at) { std::uint32_t v = 0; std::memcpy(&v, dds.data() + at, 4); return v; };
+    const std::uint32_t height = d32(12), width = d32(16), mip_count = std::max(1u, d32(28));
+    const std::uint32_t body_flags = u32(tail + 4), footer = u32(game_body.size() - 4);
+    DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
+    const std::uint32_t fourcc = d32(84);
+    if (std::memcmp(dds.data() + 84, "DX10", 4) == 0 && dds.size() >= 148) {
+        format = static_cast<DXGI_FORMAT>(d32(128));
+    } else {
+        // legacy DDS pixel formats the game uses
+        switch (fourcc) {
+        case 111: format = DXGI_FORMAT_R16_FLOAT; break;
+        case 112: format = DXGI_FORMAT_R16G16_FLOAT; break;
+        case 113: format = DXGI_FORMAT_R16G16B16A16_FLOAT; break;
+        case 114: format = DXGI_FORMAT_R32_FLOAT; break;
+        case 115: format = DXGI_FORMAT_R32G32_FLOAT; break;
+        case 116: format = DXGI_FORMAT_R32G32B32A32_FLOAT; break;
+        case 0x31545844: format = DXGI_FORMAT_BC1_UNORM; break; // DXT1
+        case 0x33545844: format = DXGI_FORMAT_BC2_UNORM; break; // DXT3
+        case 0x35545844: format = DXGI_FORMAT_BC3_UNORM; break; // DXT5
+        case 0x31495441: format = DXGI_FORMAT_BC4_UNORM; break; // ATI1
+        case 0x32495441: format = DXGI_FORMAT_BC5_UNORM; break; // ATI2
+        case 0: {
+            const std::uint32_t bits = d32(88), red = d32(92), alpha = d32(104);
+            if (bits == 32) format = red == 0xff ? DXGI_FORMAT_R8G8B8A8_UNORM : DXGI_FORMAT_B8G8R8A8_UNORM;
+            else if (bits == 8) format = alpha ? DXGI_FORMAT_A8_UNORM : DXGI_FORMAT_R8_UNORM;
+            else if (bits == 16) format = DXGI_FORMAT_R8G8_UNORM;
+            break;
+        }
+        default: break;
+        }
+    }
+    if (format == DXGI_FORMAT_UNKNOWN || !width || !height) {
+        error = "the game's texture uses a pixel format the compiler can't write";
+        return false;
+    }
+    const bool srgb = DirectX::IsSRGB(format);
+    DirectX::Image image{source.width, source.height, srgb ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : DXGI_FORMAT_R8G8B8A8_UNORM,
+                         static_cast<std::size_t>(source.width) * 4, static_cast<std::size_t>(source.width) * source.height * 4,
+                         const_cast<std::uint8_t*>(source.pixels.data())};
+    DirectX::ScratchImage sized, chain, encoded;
+    const auto filter = DirectX::TEX_FILTER_FORCE_NON_WIC | (srgb ? DirectX::TEX_FILTER_SRGB : DirectX::TEX_FILTER_DEFAULT);
+    HRESULT hr = DirectX::Resize(image, width, height, filter, sized);
+    if (SUCCEEDED(hr)) {
+        hr = mip_count > 1 ? DirectX::GenerateMipMaps(*sized.GetImage(0, 0, 0), filter, mip_count, chain)
+                           : chain.InitializeFromImage(*sized.GetImage(0, 0, 0));
+    }
+    if (SUCCEEDED(hr)) {
+        hr = DirectX::IsCompressed(format)
+            ? DirectX::Compress(chain.GetImages(), chain.GetImageCount(), chain.GetMetadata(), format,
+                                srgb ? DirectX::TEX_COMPRESS_SRGB : DirectX::TEX_COMPRESS_DEFAULT, DirectX::TEX_THRESHOLD_DEFAULT, encoded)
+            : DirectX::Convert(chain.GetImages(), chain.GetImageCount(), chain.GetMetadata(), format,
+                               DirectX::TEX_FILTER_DEFAULT, DirectX::TEX_THRESHOLD_DEFAULT, encoded);
+    }
+    if (FAILED(hr)) {
+        std::ostringstream ss;
+        ss << "DirectXTex could not encode the texture (HRESULT 0x" << std::hex << static_cast<unsigned long>(hr) << ")";
+        error = ss.str();
+        return false;
+    }
+    // DDS (DX10 header) holding every mip, then the game's mip block with the resident mip table
+    std::vector<std::uint8_t> header(148, 0);
+    const auto put = [&](std::size_t at, std::uint32_t value) { std::memcpy(header.data() + at, &value, 4); };
+    std::memcpy(header.data(), "DDS ", 4);
+    put(4, 124); put(8, 0x81007u | (mip_count > 1 ? 0x20000u : 0u)); put(12, height); put(16, width);
+    put(20, static_cast<std::uint32_t>(encoded.GetImage(0, 0, 0)->slicePitch));
+    put(28, mip_count); put(76, 32); put(80, 4); std::memcpy(header.data() + 84, "DX10", 4);
+    put(108, 0x1000u | (mip_count > 1 ? 0x400008u : 0u)); put(128, static_cast<std::uint32_t>(format)); put(132, 3); put(140, 1);
+    std::vector<std::uint8_t> resident = header, table;
+    std::uint32_t offset = 0;
+    for (std::uint32_t i = 0; i < 16; ++i) {
+        std::uint32_t size = 0;
+        if (i < mip_count) {
+            const DirectX::Image* mip = encoded.GetImage(i, 0, 0);
+            if (!mip) { error = "DirectXTex returned fewer mips than the game's texture has"; return false; }
+            resident.insert(resident.end(), mip->pixels, mip->pixels + mip->slicePitch);
+            size = static_cast<std::uint32_t>(mip->slicePitch);
+        }
+        append(table, size ? offset : 0u);
+        append(table, size);
+        offset += size;
+    }
+    std::vector<std::uint8_t> packed;
+    if (!oodle.compress_roundtrip(resident, packed, "texture", error)) return false;
+    body.clear();
+    append(body, std::uint32_t{1}); append(body, static_cast<std::uint32_t>(packed.size()));
+    append(body, static_cast<std::uint32_t>(resident.size())); append_bytes(body, packed);
+    append(body, std::uint32_t{67}); append(body, body_flags); append(body, std::uint32_t{0});
+    append(body, width); append(body, height); append_bytes(body, table);
+    append(body, std::uint32_t{8}); append(body, std::uint32_t{0}); append(body, std::uint32_t{0}); // no streamed chunks
+    append(body, footer);
+    return true;
+#else
+    (void)source; (void)game_body; (void)body;
+    error = "writing textures like the game's needs the Windows build (DirectXTex and Darktide's Oodle DLL)";
+    return false;
+#endif
 }
 
 bool inspect_texture_blob(const std::vector<std::uint8_t>& blob,std::string& report,std::string& error){

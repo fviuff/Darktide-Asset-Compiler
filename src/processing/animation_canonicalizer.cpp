@@ -105,7 +105,7 @@ void canonicalize_clip(AnimationInfo& animation, Scene& scene,
         // The native writer expands STEP boundaries.  Keep the first and
         // final samples and deterministically thin only the genuinely
         // non-redundant transitions when that expansion would exceed its
-        // proven per-track budget.
+        // per-track budget.
         constexpr std::size_t max_step_transitions = 2500u;
         if (track.interpolation == AnimationInterpolation::Step &&
             track.times.size() > max_step_transitions + 1u) {

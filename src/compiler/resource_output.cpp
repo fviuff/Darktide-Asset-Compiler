@@ -283,6 +283,13 @@ bool serialize_graph(const ResourceGraph& graph, const std::filesystem::path& di
             ok = stingray::material::write_material_pair(node.key.name, *material, path, stream_path, stream, error);
         } else if (const auto* preserved = std::get_if<stingray::material::PreservedMaterialStream>(&node.resource)) {
             ok = stingray::material::write_preserved_material_pair(node.key.name, *preserved, path, stream_path, stream, error);
+        } else if (const auto* texture = std::get_if<PreservedTexture>(&node.resource)) {
+            ok = save(path, stingray::wrap_cooked_resource("texture", node.key.name, texture->body, stream), error) &&
+                 (stream.empty() || save(stream_path, texture->stream, error));
+        } else if (const auto* unit = std::get_if<PreservedUnit>(&node.resource)) {
+            ok = save(path, stingray::wrap_cooked_resource("unit", node.key.name, unit->body), error);
+        } else if (const auto* particles = std::get_if<ParticlesResource>(&node.resource)) {
+            ok = save(path, stingray::wrap_cooked_resource("particles", node.key.name, particles->body), error);
         } else if (const auto* texture = std::get_if<TextureResource>(&node.resource)) {
             stingray::texture::CookedTexture cooked;
             ok = stingray::texture::write_native_texture_rgba(texture->image, texture->profile, node.key.name,
@@ -341,9 +348,7 @@ bool write_build_manifest(const ResourceGraph& graph, const SerializedResources&
          << ",\"name\":" << quote(metadata.target_profile.name)
          << ",\"unit_version\":" << metadata.target_profile.unit_version
          << ",\"material_version\":" << metadata.target_profile.material_version
-         << ",\"evidence\":{\"unit\":" << quote(target_evidence_state_name(metadata.target_profile.unit_evidence))
-         << ",\"material\":" << quote(target_evidence_state_name(metadata.target_profile.material_evidence))
-         << "}},\n  \"roots\":[";
+         << "},\n  \"roots\":[";
     bool first = true;
     for (const auto& root : graph.roots) { if (!first) json << ','; first = false; json << key_json(root); }
     json << "],\n  \"artifacts\":[";

@@ -175,7 +175,8 @@ AuthoredMembers authored_members(std::string_view text, const std::string& locat
         if (p >= text.size() || text[p++] != ':') throw std::runtime_error(location + " has an invalid member");
         const auto value_end = json_value_end(text, p);
         if (value_end == std::string_view::npos) throw std::runtime_error(location + " has an invalid value");
-        if (std::none_of(allowed.begin(), allowed.end(), [&](const char* name) { return key == name; }))
+        // An empty allow-list accepts any key (free-form name -> value maps).
+        if (allowed.size() != 0 && std::none_of(allowed.begin(), allowed.end(), [&](const char* name) { return key == name; }))
             throw std::runtime_error(location + ": unsupported field '" + key + "'");
         if (!result.emplace(key, authored_trim(text.substr(p, value_end - p))).second)
             throw std::runtime_error(location + ": duplicate field '" + key + "'");
@@ -204,6 +205,27 @@ float authored_number(std::string_view text, const std::string& location) {
     if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() || !std::isfinite(value))
         throw std::runtime_error(location + " must be a finite number");
     return value;
+}
+// A number or an array of 1..4 numbers (shader variable values).
+std::vector<float> authored_floats(std::string_view value, const std::string& location) {
+    std::vector<float> floats;
+    auto text = authored_trim(value);
+    if (!text.empty() && text.front() == '[') {
+        if (text.back() != ']') throw std::runtime_error(location + ": malformed array");
+        text = text.substr(1, text.size() - 2);
+        std::size_t start = 0;
+        while (start <= text.size()) {
+            const auto comma = text.find(',', start);
+            const auto part = text.substr(start, comma == std::string_view::npos ? std::string_view::npos : comma - start);
+            if (!authored_trim(part).empty()) floats.push_back(authored_number(authored_trim(part), location));
+            if (comma == std::string_view::npos) break;
+            start = comma + 1;
+        }
+    } else {
+        floats.push_back(authored_number(value, location));
+    }
+    if (floats.empty() || floats.size() > 4) throw std::runtime_error(location + ": needs 1 to 4 numbers");
+    return floats;
 }
 std::optional<std::string_view> authored_payload(const cgltf_data* data, const cgltf_extras& extras,
                                                  std::string_view key = "darktide_asset") {
@@ -286,10 +308,66 @@ void populate_asset_definition(const cgltf_data* data, Scene& out) {
         const auto payload = authored_payload(data, data->nodes[index].extras);
         if (!payload) continue;
         const auto location = "node[" + std::to_string(index) + "].darktide_asset";
-        const auto members = authored_members(*payload, location, {"version", "id", "body", "collider", "joint"});
+        const auto members = authored_members(*payload, location, {"version", "id", "body", "collider", "joint", "visibility_group", "dangle", "particles"});
         const int version = authored_version_value(members, location);
         const auto id = authored_string(members, "id", location);
         if (!ids.insert(id).second) throw std::runtime_error(location + ": duplicate authored id '" + id + "'");
+        if (members.count("visibility_group")) {
+            const auto group = authored_string(members, "visibility_group", location);
+            if (!group.empty()) out.asset_definition.visibility_groups.push_back({group, index});
+        }
+        if (const auto record = members.find("particles"); record != members.end()) {
+            const auto where = location + ".particles";
+            const auto fields = authored_members(record->second, where, {"name", "effect", "source", "extract", "materials"});
+            ParticleEffectDefinition effect;
+            effect.name = authored_string(fields, "name", where);
+            if (const auto description = fields.find("effect"); description != fields.end()) {
+                // the description as a JSON object, or as a string holding it
+                const auto text = authored_trim(description->second);
+                if (!text.empty() && text.front() == '"') {
+                    if (text.size() < 2 || !json_unescape_string(text.substr(1, text.size() - 2), effect.description))
+                        throw std::runtime_error(where + ".effect: not a valid JSON string");
+                } else {
+                    effect.description = std::string(text);
+                }
+            } else
+                effect.source = authored_string(fields, "source", where);
+            effect.extract = authored_string(fields, "extract", where);
+            if (const auto materials = fields.find("materials"); materials != fields.end()) {
+                for (const auto& [key, value] : authored_members(materials->second, where + ".materials", {})) {
+                    if (key.size() != 16 || !std::all_of(key.begin(), key.end(), [](unsigned char c) { return std::isxdigit(c) != 0; }))
+                        throw std::runtime_error(where + ".materials: keys are 16-digit material hashes");
+                    const auto at = where + ".materials." + key;
+                    const auto edit = authored_members(value, at, {"variables", "textures"});
+                    ParticleMaterialEdit out_edit;
+                    if (const auto variables = edit.find("variables"); variables != edit.end())
+                        for (const auto& [name, numbers] : authored_members(variables->second, at + ".variables", {}))
+                            out_edit.variables.emplace(name, authored_floats(numbers, at + ".variables." + name));
+                    if (const auto textures = edit.find("textures"); textures != edit.end())
+                        for (const auto& [channel, image] : authored_members(textures->second, at + ".textures", {})) {
+                            AuthoredMembers wrapper; wrapper.emplace("image", image);
+                            out_edit.textures.emplace(channel, authored_string(wrapper, "image", at + ".textures." + channel));
+                        }
+                    effect.materials.emplace(std::stoull(key, nullptr, 16), std::move(out_edit));
+                }
+            }
+            out.particle_effects.push_back(std::move(effect));
+        }
+        if (const auto record = members.find("dangle"); record != members.end()) {
+            const auto fields = authored_members(record->second, location + ".dangle",
+                {"mode", "length", "mass", "gravity", "damping", "stiffness", "max_angle", "max_stretch"});
+            DangleDefinition dangle; dangle.source_node = index;
+            const auto mode = authored_string(fields, "mode", location + ".dangle", "swing");
+            if (mode != "swing" && mode != "jiggle") throw std::runtime_error(location + ".dangle: mode must be swing or jiggle");
+            if (mode == "jiggle") { dangle.jiggle = true; dangle.stiffness = 1000.0f; dangle.damping = 400.0f; }
+            const auto number = [&](const char* key, float& target) {
+                if (const auto it = fields.find(key); it != fields.end()) target = authored_number(it->second, location + ".dangle." + key);
+            };
+            number("length", dangle.length); number("mass", dangle.mass); number("gravity", dangle.gravity);
+            number("damping", dangle.damping); number("stiffness", dangle.stiffness); number("max_angle", dangle.max_angle_degrees);
+            number("max_stretch", dangle.max_stretch);
+            out.asset_definition.dangles.push_back(dangle);
+        }
         if (version == 1) {
         authored_version(members, location);
         if (members.count("body") || members.count("joint")) throw std::runtime_error(location + ": version 1 node extras only support collider");
@@ -1265,7 +1343,7 @@ MaterialInfo convert_material(const cgltf_data* data, const cgltf_material& sour
     material.name = source.name ? source.name : "material_" + std::to_string(index);
     if (const auto payload = authored_payload(data, source.extras, "darktide_material")) {
         const std::string location = "material[" + std::to_string(index) + "].extras.darktide_material";
-        const auto members = authored_members(*payload, location, {"version", "mode", "resource", "template", "surface", "family", "stream", "variable_overrides"});
+        const auto members = authored_members(*payload, location, {"version", "mode", "resource", "template", "surface", "family", "stream", "variable_overrides", "variables", "textures", "shader_streams"});
         authored_version(members, location, "darktide_material");
         const auto mode = authored_string(members, "mode", location);
         if (mode == "generated") {
@@ -1316,8 +1394,41 @@ MaterialInfo convert_material(const cgltf_data* data, const cgltf_material& sour
                                                  {"nm_r_blend", "shared_blend", "bc_blend"});
             for (const auto& [key, value] : values)
                 material.donor_variable_overrides.emplace(key, authored_number(value, location + ".variable_overrides." + key));
+        } else if (mode == "game_shader") {
+            if (members.count("resource") || members.count("template") || members.count("family") ||
+                members.count("variable_overrides"))
+                throw std::runtime_error(location + ": game_shader mode takes stream, variables, textures, shader_streams and surface");
+            material.intent = MaterialInfo::Intent::GameShader;
+            const auto stream = std::filesystem::path(authored_string(members, "stream", location));
+            const auto resolved_stream = std::filesystem::absolute(stream.is_absolute() ? stream : document_path.parent_path() / stream).lexically_normal();
+            material.donor_stream_path = resolved_stream.string();
+            if (const auto shaders = members.find("shader_streams"); shaders != members.end()) {
+                // relative to the bundle folder the stream lives in (<bundle>/data/xx/<hash>)
+                const auto bundle = resolved_stream.parent_path().parent_path().parent_path();
+                for (const auto& [key, value] : authored_members(shaders->second, location + ".shader_streams", {})) {
+                    AuthoredMembers wrapper; wrapper.emplace("path", value);
+                    const auto relative = authored_string(wrapper, "path", location + ".shader_streams." + key);
+                    if (key.size() != 16 || !std::all_of(key.begin(), key.end(), [](unsigned char c) { return std::isxdigit(c) != 0; }))
+                        throw std::runtime_error(location + ".shader_streams: keys are 16-digit material hashes");
+                    material.shader_streams.emplace(std::stoull(key, nullptr, 16), (bundle / relative).lexically_normal().string());
+                }
+            }
+            if (const auto variables = members.find("variables"); variables != members.end()) {
+                for (const auto& [key, value] : authored_members(variables->second, location + ".variables", {}))
+                    material.shader_variables.emplace(key, authored_floats(value, location + ".variables." + key));
+            }
+            if (const auto textures = members.find("textures"); textures != members.end()) {
+                for (const auto& [key, value] : authored_members(textures->second, location + ".textures", {})) {
+                    AuthoredMembers wrapper; wrapper.emplace("slot", value);
+                    const auto slot = authored_string(wrapper, "slot", location + ".textures." + key);
+                    if (slot != "base_color" && slot != "normal" && slot != "orm" && slot != "emissive")
+                        throw std::runtime_error(location + ".textures." + key + ": use base_color, normal, orm or emissive");
+                    material.shader_textures.emplace(key, slot);
+                }
+            }
+            material.surface_material = authored_string(members, "surface", location, "default");
         } else {
-            throw std::runtime_error(location + ": mode must be generated, emissive, external, template, or donor");
+            throw std::runtime_error(location + ": mode must be generated, emissive, external, template, donor, or game_shader");
         }
     }
     material.double_sided = source.double_sided != 0;

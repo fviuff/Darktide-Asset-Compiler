@@ -295,9 +295,9 @@ std::string core_material_gap(const Scene& scene, const MaterialInfo& material) 
     if (std::find_if(allowed_surface_materials.begin(), allowed_surface_materials.end(),
                      [&](const char* value) { return material.surface_material == value; }) ==
         allowed_surface_materials.end())
-        return "surface material is outside the evidenced substance_basic child profile";
+        return "unknown surface material";
     if (material.intent == MaterialInfo::Intent::Template)
-        return "named Darktide material templates are unsupported because no qualified template catalog is available";
+        return "named Darktide material templates are not supported; use an external material or a game shader";
     if (material.unlit)
         return "core material requires a lit substance_basic profile";
     if (material.alpha_mode != "OPAQUE" && material.alpha_mode != "MASK" &&
@@ -309,18 +309,18 @@ std::string core_material_gap(const Scene& scene, const MaterialInfo& material) 
     if (material.has_clearcoat || material.has_transmission || material.has_volume || material.has_sheen ||
         material.has_specular || material.has_iridescence || material.has_anisotropy ||
         material.has_diffuse_transmission || material.has_dispersion)
-        return "advanced KHR_materials_* profile has no proven Darktide parent-material mapping";
+        return "this KHR_materials_* extension combination has no Darktide material mapping";
     if (material.has_pbr_specular_glossiness)
-        return "KHR_materials_pbrSpecularGlossiness has no proven Darktide parent-material mapping";
+        return "KHR_materials_pbrSpecularGlossiness has no Darktide material mapping";
     if (material.has_ior)
-        return "KHR_materials_ior has no proven Darktide parent-material mapping";
+        return "KHR_materials_ior has no Darktide material mapping";
     if (!std::isfinite(material.emissive_strength) || material.emissive_strength < 0.0f ||
         std::any_of(material.emissive.begin(), material.emissive.end(),
                     [](float value) { return !std::isfinite(value) || value < 0.0f; }))
         return "emissive factor and strength must be finite and nonnegative";
     if (material.alpha_mode == "MASK" && material.emissive_strength > 0.0f &&
         std::any_of(material.emissive.begin(), material.emissive.end(), [](float value) { return value > 0.0f; }))
-        return "MASK materials with effective emission have no proven Darktide parent-material mapping";
+        return "alpha-masked materials cannot also emit light";
     const bool emits = material.emissive_strength > 0.0f &&
         std::any_of(material.emissive.begin(), material.emissive.end(), [](float value) { return value > 0.0f; });
     const std::array<const dtglb::TextureBinding*,5> bindings{{&material.base_color_texture,
@@ -371,8 +371,106 @@ std::string opaque_id(std::uint64_t hash) {
     return text.str();
 }
 
+// Darktide keeps compiled shaders inside the shader provider and parent materials (the shader section of their
+// stream). Only the ones a level's own content uses are loaded, and listing a retail one in our package does not
+// load it, so pointing at a retail provider renders the missing-shader fallback wherever it is not loaded.
+// Owned copies ship the shaders with the asset: the retail stream under this asset's name, with its two
+// self-references renamed (the parent it names, and the high 32 bits of its own name in the shader section).
+struct RetailShaderMaterial {
+    std::uint64_t hash;
+    const char* stream;   // <game>/bundle/<stream>
+    std::uint64_t parent; // the retail parent a provider names, 0 for a parent
+};
+
+constexpr RetailShaderMaterial kMaskParent{0x345c8a27a643dc8eull, "data/92/92d2c40bc8013b6b", 0};
+constexpr RetailShaderMaterial kMaskProvider{0xe03ea781c4162268ull, "data/79/79279ef5a09093ce", kMaskParent.hash};
+constexpr RetailShaderMaterial kTransparentParent{0x40bc90ba5e9b0852ull, "data/5d/5d45d4077a699788", 0};
+constexpr RetailShaderMaterial kTransparentProvider{0x1a7adfef3dbd8e95ull, "data/11/115f106a06003fa6",
+                                                    kTransparentParent.hash};
+
+std::uint32_t stream_u32(const std::vector<std::uint8_t>& bytes, std::size_t offset) {
+    std::uint32_t value; std::memcpy(&value, bytes.data() + offset, 4); return value;
+}
+
+bool own_shader_material(const CompilationContext& context, ResourceGraph& graph, std::uint64_t hash,
+                         const std::filesystem::path& path, std::uint64_t expected_parent,
+                         const ResourceKey* owned_parent, ResourceKey& out, std::string& error,
+                         const OwnTexture& own_texture = {}) {
+    const RetailShaderMaterial retail{hash, nullptr, expected_parent};
+    const auto stem = context.file_base() + "_shader_" + opaque_id(retail.hash).substr(4, 16);
+    out = context.generated_key("material", stem);
+    if (std::any_of(graph.owned.begin(), graph.owned.end(), [&](const auto& node) { return node.key == out; })) return true;
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(path, ec);
+    std::vector<std::uint8_t> bytes(ec ? 0 : static_cast<std::size_t>(size));
+    std::ifstream input(path, std::ios::binary);
+    if (ec || size < 28 || size > (1u << 26) || !input ||
+        !input.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()))) {
+        error = "cannot read the game's shader material " + opaque_id(retail.hash) + " from " + path.string() +
+            " (set DARKTIDE_GAME_ROOT or run --configure-oodle with your game folder)";
+        return false;
+    }
+    const std::size_t material = stream_u32(bytes, 4), shader = stream_u32(bytes, 12), shader_size = stream_u32(bytes, 16);
+    std::uint64_t provider = 0, parent = 0;
+    if (material + 20 <= bytes.size()) {
+        std::memcpy(&provider, bytes.data() + material + 4, 8);
+        std::memcpy(&parent, bytes.data() + material + 12, 8);
+    }
+    if (material + 20 > bytes.size() || shader_size < 8 || shader + shader_size > bytes.size() || provider != 0 ||
+        parent != retail.parent || stream_u32(bytes, shader + 4) != static_cast<std::uint32_t>(retail.hash >> 32)) {
+        error = "the game's shader material " + opaque_id(retail.hash) + " at " + path.string() +
+            " is not the expected stream (game update?)";
+        return false;
+    }
+    const std::uint64_t owned_parent_hash = owned_parent ? stingray::resource_name_hash(owned_parent->name) : 0;
+    const auto own_name = static_cast<std::uint32_t>(stingray::resource_name_hash(out.name) >> 32);
+    std::memcpy(bytes.data() + material + 12, &owned_parent_hash, 8);
+    std::memcpy(bytes.data() + shader + 4, &own_name, 4);
+    std::vector<ResourceKey> dependencies;
+    if (owned_parent) dependencies.push_back(*owned_parent);
+    if (own_texture) {
+        stingray::material::MaterialStream parsed;
+        if (!stingray::material::parse_material_stream(bytes, parsed, error)) return false;
+        std::vector<stingray::material::TextureResourceHashEdit> edits;
+        for (const auto& texture : parsed.textures) {
+            if (!texture.resource_hash) continue;
+            ResourceKey owned;
+            if (!own_texture(texture.resource_hash, owned, error)) return false;
+            edits.push_back({texture.channel_hash, texture.resource_hash, stingray::resource_name_hash(owned.name)});
+            dependencies.push_back(std::move(owned));
+        }
+        std::vector<std::uint8_t> edited;
+        if (!edits.empty()) {
+            if (!stingray::material::clone_material_v61_with_texture_hash_edits(bytes, edits, edited, error)) return false;
+            bytes = std::move(edited);
+        }
+    }
+    stingray::material::MaterialDependencyHashes hashes;
+    if (!stingray::material::validate_preserved_material_v61(bytes, hashes, error)) return false;
+    for (const auto texture : own_texture ? std::vector<std::uint64_t>{} : hashes.texture_resource_hashes) {
+        if (!texture) continue;
+        ResourceKey dependency{"texture", opaque_id(texture)};
+        graph.external.push_back({dependency, true});
+        dependencies.push_back(std::move(dependency));
+    }
+    graph.owned.push_back({out, stem + ".material", stingray::material::PreservedMaterialStream{std::move(bytes)},
+                           std::move(dependencies)});
+    return true;
+}
+
+// provider + its parent as owned copies; returns the two keys the child material references
+bool own_shader_family(const CompilationContext& context, ResourceGraph& graph, const RetailShaderMaterial& provider,
+                       const RetailShaderMaterial& parent, ResourceKey& owned_provider, ResourceKey& owned_parent,
+                       std::string& error) {
+    const auto bundle = stingray::texture::game_root() / "bundle";
+    return own_shader_material(context, graph, parent.hash, bundle / parent.stream, parent.parent, nullptr,
+                               owned_parent, error) &&
+           own_shader_material(context, graph, provider.hash, bundle / provider.stream, provider.parent,
+                               &owned_parent, owned_provider, error);
+}
+
 // This is a deliberately narrow retained-world-surface contract. The current
-// UNIT writer has no renderer-qualified general material-template interface.
+// UNIT writer has no general material-template interface.
 bool world_surface_blend_v1(const stingray::material::MaterialStream& donor) {
     static constexpr std::array<std::uint32_t, 4> channels{
         0x2fadcc8cu, 0xcdd75b95u, 0xb45e95f3u, 0x8655079cu};
@@ -460,7 +558,7 @@ bool build_donor_material(const Scene& scene, const MaterialInfo& material, cons
     stingray::material::MaterialStream parsed;
     if (!stingray::material::parse_material_stream(bytes, parsed, error) ||
         !world_surface_blend_v1(parsed)) {
-        error = "native material donor is not the evidenced world_surface_blend_v1 layout";
+        error = "the donor material is not a world_surface_blend material";
         return false;
     }
 
@@ -585,6 +683,155 @@ bool build_donor_material(const Scene& scene, const MaterialInfo& material, cons
     bindings.push_back({slot, key.name});
     return true;
 }
+
+// Retail materials list every variable of their shader, so a "game shader"
+// material is a copy of one retail material stream with chosen variables and
+// texture channels replaced. The shader provider, parent and any retail textures
+// left in place become external dependencies.
+std::uint32_t authored_id32(const std::string& name) {
+    if (name.size() == 9 && name[0] == '#' &&
+        std::all_of(name.begin() + 1, name.end(), [](unsigned char c) { return std::isxdigit(c) != 0; }))
+        return static_cast<std::uint32_t>(std::stoul(name.substr(1), nullptr, 16));
+    return stingray::id32_from_id64(name);
+}
+
+bool build_game_shader_material(const Scene& scene, const MaterialInfo& material, const CompilationContext& context,
+                                const std::string& stem, const std::string& slot, ResourceGraph& graph,
+                                std::vector<std::pair<std::string, std::string>>& bindings, std::string& error) {
+    std::filesystem::path path(material.donor_stream_path);
+#ifdef _WIN32
+    if (path.is_absolute()) {
+        const auto native = path.native();
+        if (!native.starts_with(L"\\\\?\\")) {
+            path = native.starts_with(L"\\\\")
+                ? std::filesystem::path(L"\\\\?\\UNC\\" + native.substr(2))
+                : std::filesystem::path(L"\\\\?\\" + native);
+        }
+    }
+#endif
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(path, ec);
+    if (ec || size < 28 || size > (1u << 24)) {
+        error = "cannot read game shader material stream: " + material.donor_stream_path;
+        return false;
+    }
+    std::ifstream input(path, std::ios::binary);
+    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
+    if (!input || !input.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()))) {
+        error = "cannot read game shader material stream: " + material.donor_stream_path;
+        return false;
+    }
+    stingray::material::MaterialStream parsed;
+    if (!stingray::material::parse_material_stream(bytes, parsed, error)) {
+        error = "game shader stream is not a v61 material stream (" + error + "): " + material.donor_stream_path;
+        return false;
+    }
+    for (const auto& [name, values] : material.shader_variables) {
+        const auto hash = authored_id32(name);
+        const auto found = std::find_if(parsed.variables.begin(), parsed.variables.end(),
+                                        [&](const auto& variable) { return variable.name_hash == hash; });
+        if (found == parsed.variables.end()) {
+            error = "game shader has no variable '" + name + "'";
+            return false;
+        }
+        const std::size_t floats = found->klass + 1u; // class 0..3 = scalar..vec4
+        if (found->klass > 3 || values.size() != floats ||
+            found->data_offset + floats * 4 > parsed.variable_data.size()) {
+            error = "game shader variable '" + name + "' takes " + std::to_string(floats) + " number(s)";
+            return false;
+        }
+        std::vector<std::uint8_t> expected(floats * 4), replacement(floats * 4), edited;
+        std::memcpy(expected.data(), parsed.variable_data.data() + found->data_offset, floats * 4);
+        for (std::size_t i = 0; i < floats; ++i) {
+            if (!std::isfinite(values[i])) { error = "game shader variable '" + name + "' must be finite"; return false; }
+            std::memcpy(replacement.data() + i * 4, &values[i], 4);
+        }
+        if (expected == replacement) continue;
+        if (!stingray::material::clone_material_v61_with_variable_data_edit(
+                bytes, found->data_offset, expected, replacement, edited, error)) return false;
+        bytes = std::move(edited);
+    }
+    std::map<std::uint32_t, ResourceKey> owned_textures;
+    if (!material.shader_textures.empty()) {
+        std::array<stingray::texture::ImageRGBA, 4> images;
+        if (!prepare_core_images(scene, material, images, error, true, true)) return false;
+        std::vector<stingray::material::TextureResourceHashEdit> edits;
+        for (const auto& [channel, source] : material.shader_textures) {
+            const auto hash = authored_id32(channel);
+            const auto found = std::find_if(parsed.textures.begin(), parsed.textures.end(),
+                                            [&](const auto& texture) { return texture.channel_hash == hash; });
+            if (found == parsed.textures.end()) {
+                error = "game shader has no texture channel '" + channel + "'";
+                return false;
+            }
+            const std::size_t image = source == "base_color" ? 0 : source == "emissive" ? 1 : source == "normal" ? 2 : 3;
+            const auto& profile = source == "base_color" ? stingray::texture::substance_basic_bca_profile()
+                                : source == "emissive"   ? stingray::texture::pbr_emissive_em_profile()
+                                : source == "normal"     ? stingray::texture::substance_basic_nm_profile()
+                                                         : stingray::texture::substance_basic_orm_profile();
+            const auto texture_stem = stem + "_" + source;
+            const auto key = context.generated_key("texture", texture_stem);
+            if (!owned_textures.count(hash)) {
+                if (std::none_of(graph.owned.begin(), graph.owned.end(), [&](const auto& node) { return node.key == key; }))
+                    graph.owned.push_back({key, texture_stem + ".texture", TextureResource{images[image], profile}, {}});
+                edits.push_back({hash, found->resource_hash, stingray::resource_name_hash(key.name)});
+                owned_textures.emplace(hash, key);
+            }
+        }
+        std::vector<std::uint8_t> edited;
+        if (!stingray::material::clone_material_v61_with_texture_hash_edits(bytes, edits, edited, error)) return false;
+        bytes = std::move(edited);
+        if (!stingray::material::parse_material_stream(bytes, parsed, error)) return false;
+    }
+    stingray::material::MaterialDependencyHashes hashes;
+    if (!stingray::material::validate_preserved_material_v61(bytes, hashes, error)) return false;
+    std::vector<ResourceKey> dependencies;
+    // the shader provider and parent hold the compiled shaders: ship copies and point the clone at them
+    const auto own = [&](std::uint64_t hash, std::uint64_t expected_parent, const ResourceKey* parent, ResourceKey& out) {
+        const auto stream = material.shader_streams.find(hash);
+        if (stream == material.shader_streams.end()) {
+            error = "game shader material " + opaque_id(hash) + " has no shader stream; re-export with the current add-on";
+            return false;
+        }
+        if (!own_shader_material(context, graph, hash, stream->second, expected_parent, parent, out, error)) return false;
+        dependencies.push_back(out);
+        return true;
+    };
+    ResourceKey owned_parent, owned_provider;
+    const bool has_parent = hashes.parent_material_hash != 0, has_provider = hashes.shader_provider_material_hash != 0;
+    if (has_parent && !own(hashes.parent_material_hash, 0, nullptr, owned_parent)) return false;
+    if (has_provider && !own(hashes.shader_provider_material_hash, hashes.parent_material_hash,
+                             has_parent ? &owned_parent : nullptr, owned_provider)) return false;
+    {
+        const std::size_t section = stream_u32(bytes, 4);
+        const std::uint64_t provider = has_provider ? stingray::resource_name_hash(owned_provider.name) : 0;
+        const std::uint64_t parent = has_parent ? stingray::resource_name_hash(owned_parent.name) : 0;
+        std::memcpy(bytes.data() + section + 4, &provider, 8);
+        std::memcpy(bytes.data() + section + 12, &parent, 8);
+    }
+    for (const auto& texture : parsed.textures) {
+        const auto owned = owned_textures.find(texture.channel_hash);
+        if (owned != owned_textures.end()) {
+            dependencies.push_back(owned->second);
+        } else if (texture.resource_hash) {
+            ResourceKey dependency{"texture", opaque_id(texture.resource_hash)};
+            graph.external.push_back({dependency, true});
+            dependencies.push_back(std::move(dependency));
+        }
+    }
+    const auto key = context.generated_key("material", stem);
+    graph.owned.push_back({key, stem + ".material",
+        stingray::material::PreservedMaterialStream{std::move(bytes)}, std::move(dependencies)});
+    bindings.push_back({slot, key.name});
+    return true;
+}
+}
+
+bool own_game_shader_material(const CompilationContext& context, ResourceGraph& graph, std::uint64_t hash,
+                              const std::filesystem::path& stream, std::uint64_t expected_parent,
+                              const ResourceKey* owned_parent, ResourceKey& out, std::string& error,
+                              const OwnTexture& own_texture) {
+    return own_shader_material(context, graph, hash, stream, expected_parent, owned_parent, out, error, own_texture);
 }
 
 bool build_core_materials(const Scene& scene, const CompilationContext& context,
@@ -624,7 +871,6 @@ bool build_core_materials(const Scene& scene, const CompilationContext& context,
     bool basic_external_added = false;
     bool emissive_external_added = false;
     bool textureless_emissive_external_added = false;
-    bool mask_external_added = false;
     const auto add_basic_externals = [&]() {
         if (basic_external_added) return;
         graph.external.push_back({basic_shader_provider, false});
@@ -641,23 +887,6 @@ bool build_core_materials(const Scene& scene, const CompilationContext& context,
         if (textureless_emissive_external_added) return;
         graph.external.push_back({textureless_emissive_provider, false});
         textureless_emissive_external_added = true;
-    };
-    const ResourceKey mask_shader_provider{"material", "#ID[e03ea781c4162268]"};
-    const ResourceKey mask_parent_material{"material", "#ID[345c8a27a643dc8e]"};
-    const auto add_mask_externals = [&]() {
-        if (mask_external_added) return;
-        graph.external.push_back({mask_shader_provider, false});
-        graph.external.push_back({mask_parent_material, false});
-        mask_external_added = true;
-    };
-    const ResourceKey transparent_shader_provider{"material", "content/parent_materials/substance_basic_transparent"};
-    const ResourceKey transparent_parent_material{"material", "#ID[40bc90ba5e9b0852]"};
-    bool transparent_external_added = false;
-    const auto add_transparent_externals = [&]() {
-        if (transparent_external_added) return;
-        graph.external.push_back({transparent_shader_provider, false});
-        graph.external.push_back({transparent_parent_material, false});
-        transparent_external_added = true;
     };
     const std::array<const char*, 4> channels{"bc", "em", "nm", "orm"};
     auto build_one = [&](const MaterialInfo& material, const std::string& stem, const std::string& slot) {
@@ -696,13 +925,15 @@ bool build_core_materials(const Scene& scene, const CompilationContext& context,
         if (!prepare_core_images(scene, material, images, error, masked || transparent,
                                  emits && !transparent)) return false;
         if (transparent) {
-            add_transparent_externals();
+            ResourceKey provider, parent;
+            if (!own_shader_family(context, graph, kTransparentProvider, kTransparentParent, provider, parent, error))
+                return false;
             stingray::material::TransparentProfileSpec spec;
             spec.texture_hashes = {};
             spec.surface_material = material.surface_material;
             const std::array<std::size_t, 3> image_indices{{0, 2, 3}};
             const std::array<const char*, 3> transparent_channels{{"bca", "nm", "orm"}};
-            std::vector<ResourceKey> dependencies{transparent_shader_provider, transparent_parent_material};
+            std::vector<ResourceKey> dependencies{provider, parent};
             for (std::size_t i = 0; i < transparent_channels.size(); ++i) {
                 const auto texture_stem = stem + "_" + transparent_channels[i];
                 const auto key = context.generated_key("texture", texture_stem);
@@ -714,19 +945,22 @@ bool build_core_materials(const Scene& scene, const CompilationContext& context,
             const auto key = context.generated_key("material", stem);
             stingray::material::MaterialStream resource;
             if (!stingray::material::build_transparent_profile(spec, resource, error)) return false;
+            resource.shader_provider_material_hash = stingray::resource_name_hash(provider.name);
+            resource.parent_material_hash = stingray::resource_name_hash(parent.name);
             graph.owned.push_back({key, stem + ".material", std::move(resource), std::move(dependencies)});
             bindings.push_back({slot, key.name});
             return true;
         }
         if (masked && !emits) {
-            add_mask_externals();
+            ResourceKey provider, parent;
+            if (!own_shader_family(context, graph, kMaskProvider, kMaskParent, provider, parent, error)) return false;
             stingray::material::MaskProfileSpec spec;
             spec.texture_hashes = {};
             spec.alpha_cutoff = material.alpha_cutoff;
             spec.surface_material = material.surface_material;
             const std::array<std::size_t, 3> image_indices{{0, 2, 3}};
             const std::array<const char*, 3> mask_channels{{"bca", "nm", "orm"}};
-            std::vector<ResourceKey> dependencies{mask_shader_provider, mask_parent_material};
+            std::vector<ResourceKey> dependencies{provider, parent};
             for (std::size_t i = 0; i < mask_channels.size(); ++i) {
                 const auto texture_stem = stem + "_" + mask_channels[i];
                 const auto key = context.generated_key("texture", texture_stem);
@@ -738,6 +972,8 @@ bool build_core_materials(const Scene& scene, const CompilationContext& context,
             const auto key = context.generated_key("material", stem);
             stingray::material::MaterialStream resource;
             if (!stingray::material::build_mask_profile(spec, resource, error)) return false;
+            resource.shader_provider_material_hash = stingray::resource_name_hash(provider.name);
+            resource.parent_material_hash = stingray::resource_name_hash(parent.name);
             graph.owned.push_back({key, stem + ".material", std::move(resource), std::move(dependencies)});
             bindings.push_back({slot, key.name});
             return true;
@@ -793,6 +1029,12 @@ bool build_core_materials(const Scene& scene, const CompilationContext& context,
         const auto& material = scene.materials[i];
         if (material.intent == MaterialInfo::Intent::Donor) {
             if (!build_donor_material(scene, material, context,
+                    context.file_base() + "_material_" + std::to_string(i), slot,
+                    graph, bindings, error)) return false;
+            continue;
+        }
+        if (material.intent == MaterialInfo::Intent::GameShader) {
+            if (!build_game_shader_material(scene, material, context,
                     context.file_base() + "_material_" + std::to_string(i), slot,
                     graph, bindings, error)) return false;
             continue;

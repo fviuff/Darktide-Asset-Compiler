@@ -15,6 +15,8 @@
 #include "stingray/texture/texture_writer.h"
 #include "processing/texture_processor.h"
 #include "processing/scene_scaler.h"
+#include "processing/dangle_canonicalizer.h"
+#include "processing/root_motion.h"
 #include "processing/material_canonicalizer.h"
 #include "processing/attribute_canonicalizer.h"
 #include "processing/topology_canonicalizer.h"
@@ -688,6 +690,14 @@ int compile(const CompileOptions& requested_options) {
         std::cerr << "compile failed: " << error << "\n";
         return 2;
     }
+    if (!processing::canonicalize_dangles(scene, error)) {
+        std::cerr << "compile failed: " << error << "\n";
+        return 2;
+    }
+    if (options.in_place && !processing::remove_root_motion(scene, error)) {
+        std::cerr << "compile failed: " << error << "\n";
+        return 2;
+    }
 
     processing::TopologyCanonicalizationReport topology_report;
     if (!processing::canonicalize_non_triangle_topology(scene, topology_report, error)) {
@@ -888,9 +898,11 @@ int compile(const CompileOptions& requested_options) {
 
     if (options.output_kind == OutputKind::Animations)
         std::cout << "compiled " << plan.animation_indices.size() << " animation clip(s) -> " << display_output_dir.string() << "\n";
-    else
+    else if (emit_unit)
         std::cout << "compiled " << scene.primitives.size() << " primitive(s), " << verts << " vertices, " << tris
                   << " triangles -> " << (display_output_dir / unit_path.filename()).string() << "\n";
+    for (const auto& effect : scene.particle_effects)
+        std::cout << "particle effect " << context.generated_key("particles", effect.name).name << "\n";
     if (options.validate && !report.empty()) std::cout << report << "\n";
     for (const auto& approximation : plan.approximations)
         std::cout << "approximation: " << approximation << "\n";

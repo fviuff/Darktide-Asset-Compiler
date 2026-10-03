@@ -42,10 +42,12 @@ bool canonicalize_scene_features(Scene& scene, SceneFeatureCanonicalizationRepor
             note(scene, report, static_cast<std::size_t>(node_index), "camera_ignored",
                  "node " + std::to_string(node_index) + ": ignored active camera attachment");
         }
-        if (node.light >= 0) {
+        // Point and spot lights become UNIT lights; units carry no directional lights.
+        if (node.light >= 0 && static_cast<std::size_t>(node.light) < scene.lights.size() &&
+            scene.lights[static_cast<std::size_t>(node.light)].type == LightInfo::Type::Directional) {
             node.light = -1;
             note(scene, report, static_cast<std::size_t>(node_index), "light_ignored",
-                 "node " + std::to_string(node_index) + ": ignored active punctual light attachment");
+                 "node " + std::to_string(node_index) + ": ignored directional light (UNITs carry only point and spot lights)");
         }
         if (node.skin >= 0 && !node.instance_attributes.empty()) {
             for (auto& primitive : scene.primitives) {

@@ -285,7 +285,7 @@ bool validate_geometry(Reader& r,
             report = "invalid: packed vertex stream stride changed";
             return false;
         }
-        // Every proven stream is binary16 except the final UBYTE4 joint-index stream.
+        // Every stream is binary16 except the final UBYTE4 joint-index stream.
         if (!(skinned && i + 1u == stream_count) &&
             !finite_half_region(body, data_starts[i], data_sizes[i])) {
             report = "invalid: packed vertex stream contains non-finite binary16 data";
@@ -546,7 +546,7 @@ bool validate_unit_v115(const std::filesystem::path& path, std::string& report,
             skinned != geometries[i].skinned || !valid_skin_ref ||
             (render_flags != 0x000c2003u && render_flags != (0x000c2003u | 0x00000004u)) ||
             kind != 3 || enabled != 1) {
-            report = "invalid: MeshObject is outside the proven packed static/skinned family";
+            report = "invalid: MeshObject is not a packed static or skinned mesh this compiler writes";
             return false;
         }
         float bounds[10]{};
@@ -572,10 +572,27 @@ bool validate_unit_v115(const std::filesystem::path& path, std::string& report,
     const std::set<std::uint32_t> scene_node_set(scene_names.begin(), scene_names.end());
     for (std::uint32_t a = 0; a < primary_actor_count; ++a)
         if (!validate_primary_actor(r, scene_node_set, report)) return false;
-    for (int i = 0; i < 11; ++i) if (!zero_u32(r, "late static object family", report)) return false;
-    std::uint8_t has_blender_bones = 0;
-    if (!r.u8(has_blender_bones) || has_blender_bones != 0) {
-        report = "invalid: current static UNIT declares animation Blender bones";
+    for (int i = 0; i < 3; ++i) if (!zero_u32(r, "late static object family", report)) return false;
+    std::uint32_t light_count = 0;
+    if (!r.u32(light_count) || light_count > 4096u) { report = "invalid: UNIT light count"; return false; }
+    for (std::uint32_t i = 0; i < light_count; ++i) {
+        std::uint32_t name = 0, node = 0, flags = 0, type = 0;
+        if (!r.u32(name) || !r.u32(node)) { report = "invalid: " + r.err; return false; }
+        if (node == 0 || node >= node_count) { report = "invalid: light is bound to a missing SceneGraph node"; return false; }
+        float value = 0.0f;
+        for (int f = 0; f < 13; ++f) {
+            if (!finite_f32(r, value)) { report = "invalid: light color, intensity or shape parameter is non-finite"; return false; }
+        }
+        if (!r.u32(flags) || !r.u32(type)) { report = "invalid: " + r.err; return false; }
+        if (type > 1u) { report = "invalid: only omni and spot UNIT lights are emitted"; return false; }
+        if (flags & 2u) { report = "invalid: UNIT light is disabled"; return false; }
+        if (!r.need(16 + 19 * 4)) { report = "invalid: truncated UNIT light record"; return false; }
+        r.p += 16 + 19 * 4;
+    }
+    for (int i = 0; i < 7; ++i) if (!zero_u32(r, "late static object family", report)) return false;
+    std::uint8_t animated = 0;
+    if (!r.u8(animated) || animated > 1) {
+        report = "invalid: UNIT animation-blender flag is truncated or not boolean";
         return false;
     }
     std::uint32_t state_machine_size = 0;
@@ -595,6 +612,12 @@ bool validate_unit_v115(const std::filesystem::path& path, std::string& report,
         state_machine_resource.push_back(static_cast<char>(c));
     }
     r.p += state_machine_size;
+    if ((animated != 0) != !state_machine_resource.empty()) {
+        report = animated ? "invalid: UNIT animation-blender flag is set without a state machine"
+                          : "invalid: UNIT references a state machine but the animation-blender flag is clear "
+                            "(the engine never instances it)";
+        return false;
+    }
     if (!state_machine_resource.empty() &&
         (!unit_name_hash || stingray::resource_name_hash(state_machine_resource) != unit_name_hash)) {
         report = "invalid: animation state machine path does not share the UNIT resource identity";
@@ -616,8 +639,17 @@ bool validate_unit_v115(const std::filesystem::path& path, std::string& report,
         return false;
     }
     r.p += 8;
-    if (!zero_u32(r, "visibility groups", report) ||
-        !zero_u32(r, "flow", report) ||
+    std::uint32_t visibility_group_count = 0;
+    if (!r.u32(visibility_group_count) || visibility_group_count > 4096u) { report = "invalid: UNIT visibility group count"; return false; }
+    std::set<std::uint32_t> visibility_names;
+    for (std::uint32_t i = 0; i < visibility_group_count; ++i) {
+        std::uint32_t name = 0, count = 0, mesh = 0;
+        if (!r.u32(name) || !r.u32(count) || count > geometry_count) { report = "invalid: UNIT visibility group header"; return false; }
+        if (!visibility_names.insert(name).second) { report = "invalid: duplicate UNIT visibility group name"; return false; }
+        for (std::uint32_t m = 0; m < count; ++m)
+            if (!r.u32(mesh) || mesh >= geometry_count) { report = "invalid: visibility group references a missing mesh"; return false; }
+    }
+    if (!zero_u32(r, "flow", report) ||
         !zero_u32(r, "flow dynamic data", report)) return false;
 
     std::uint32_t pre_physics_size = 0;
@@ -633,12 +665,9 @@ bool validate_unit_v115(const std::filesystem::path& path, std::string& report,
     }
     r.p += 4;
     std::uint32_t collection_actor_count = 0;
+    // Collection bodies are unit actors of their own (created at spawn when enabled, or later
+    // by a ragdoll state), so they need no UNIT actor record.
     if (!validate_physics_scene(r, scene_node_set, collection_actor_count, report)) return false;
-    if (collection_actor_count > primary_actor_count) {
-        // The engine creates unit actors from records; unrecorded collection bodies never simulate.
-        report = "invalid: every PhysX collection body needs a UNIT actor record";
-        return false;
-    }
 
     std::uint64_t default_material = 0;
     if (!r.u64(default_material) || default_material != 0) {
@@ -695,6 +724,8 @@ bool validate_unit_v115(const std::filesystem::path& path, std::string& report,
        << primary_actor_count << " physics actor(s)";
     if (collection_actor_count) ss << " (" << collection_actor_count << " in PhysX collection)";
     ss << ", ";
+    if (light_count != 0) ss << light_count << " light(s), ";
+    if (visibility_group_count != 0) ss << visibility_group_count << " visibility group(s), ";
     if (simple_tracks != 0) ss << "simple animation " << simple_tracks << " track(s), ";
     ss << file_bytes.size() << " bytes";
     report = ss.str();

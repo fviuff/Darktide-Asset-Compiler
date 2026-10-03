@@ -12,33 +12,20 @@ enum class CapabilityStatus {
     Supported,
     SupportedWithLoss,
     TargetSpecific,
-    ImplementedNotValidated,
     KnownFormatNotImplemented,
     UnknownFormat,
     UnsupportedByTarget,
     InvalidSource,
 };
 
-enum class EvidenceLevel {
-    SourceDecoded,
-    FormatUnderstood,
-    SerializerImplemented,
-    RoundTripValidated,
-    RetailCorpusMatched,
-    EngineLoads,
-    RuntimeVerified,
-};
-
 struct CapabilityRecord {
     std::string_view feature;
     CapabilityStatus status = CapabilityStatus::UnknownFormat;
-    EvidenceLevel evidence = EvidenceLevel::SourceDecoded;
 };
 
 struct CapabilityDecision {
     std::string feature;
     CapabilityStatus status = CapabilityStatus::UnknownFormat;
-    EvidenceLevel evidence = EvidenceLevel::SourceDecoded;
     bool required = false;
 };
 

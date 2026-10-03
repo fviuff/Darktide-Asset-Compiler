@@ -79,7 +79,7 @@ struct InheritedMaterialSpec {
     std::vector<TextureBinding> textures;
     std::vector<Variable> variables;
     std::vector<std::uint8_t> variable_data;
-    // For callers that need contexts beyond the evidenced surface material.
+    // For callers that need contexts beyond the surface material.
     // Do not combine this with surface_material; the builder rejects that
     // ambiguous form instead of silently overriding one source.
     std::optional<std::vector<ContextBinding>> contexts;

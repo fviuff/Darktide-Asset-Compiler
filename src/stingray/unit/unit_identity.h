@@ -7,8 +7,6 @@
 
 namespace dtglb::stingray::unit {
 
-enum class NativeNameHashDomain { LegacyId32, Id64High32 };
-
 struct MaterialSlotLowering {
     std::vector<std::string> primitive_slots;
     std::vector<std::string> material_slots;
@@ -22,8 +20,7 @@ std::vector<std::string> lower_unique_native_names(
     const std::vector<std::size_t>& stable_indices,
     const std::string& kind,
     const std::string& empty_prefix,
-    const std::vector<std::uint32_t>& reserved_hashes = {},
-    NativeNameHashDomain hash_domain = NativeNameHashDomain::LegacyId32);
+    const std::vector<std::uint32_t>& reserved_hashes = {});
 
 MaterialSlotLowering lower_material_slots(
     const std::vector<std::string>& material_names,

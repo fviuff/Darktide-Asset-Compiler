@@ -1,9 +1,12 @@
 #include "compiler/resource_builder.h"
 #include "compiler/material_builder.h"
+#include "compiler/particles_builder.h"
 #include "compiler/source_queries.h"
 #include "stingray/unit/unit_v115.h"
 #include "stingray/bones/bones_writer.h"
+#include "stingray/murmur_hash.h"
 #include <algorithm>
+#include <optional>
 #include <cmath>
 #include <set>
 
@@ -184,10 +187,11 @@ bool build_glb_resources(const Scene& source, const app::CompileOptions& options
         const auto unit_key = context.generated_key("unit", base);
         stingray::unit::WriteOptions unit_options;
         unit_options.resource_name = unit_key.name;
-        if (plan.state_machine_animation_index || !plan.state_machine_states.empty())
+        if (plan.state_machine_animation_index || !plan.state_machine_states.empty() || plan.rest_state)
             unit_options.animation_state_machine_resource = unit_key.name;
         unit_options.material_override = options.material_override;
         unit_options.authored_physics = options.physics;
+        unit_options.ragdoll_handoff = !plan.ragdoll_event.empty();
         if (options.physics && options.fitted_physics)
             unit_options.fitted_physics = options.fitted_physics;
         std::vector<int> material_indices;
@@ -235,7 +239,7 @@ bool build_glb_resources(const Scene& source, const app::CompileOptions& options
         }
         std::set<ResourceKey> dependencies;
         if (unit_uses_selected_skin) dependencies.insert(bones);
-        if (plan.state_machine_animation_index || !plan.state_machine_states.empty())
+        if (plan.state_machine_animation_index || !plan.state_machine_states.empty() || plan.rest_state)
             dependencies.insert({"state_machine", unit_key.name});
         for (const auto& binding : unit_options.material_bindings) dependencies.insert({"material", binding.second});
         if (!options.material_override.empty()) {
@@ -272,6 +276,80 @@ bool build_glb_resources(const Scene& source, const app::CompileOptions& options
             set_feature_status(feature_status, "animation", "emitted");
         }
     }
+    // Dangling bones: one pendulum per bone, addressed by its slot in the BONES list.
+    std::vector<stingray::BoneConstraint> pendulums;
+    const auto bone_count = selected == no_skin ? 0u :
+        static_cast<std::uint32_t>(canonical_bone_names(emitted_source->skins[selected]).size());
+    if (!source.asset_definition.dangles.empty() && selected != no_skin) {
+        const auto& source_skin = source.skins[selected];
+        const auto source_names = canonical_bone_names(source_skin);
+        const auto emitted_names = canonical_bone_names(emitted_source->skins[selected]);
+        for (const auto& dangle : source.asset_definition.dangles) {
+            const auto joint = std::find(source_skin.joints.begin(), source_skin.joints.end(), dangle.source_node);
+            const auto bone_name = joint == source_skin.joints.end() ? std::string() :
+                source_names[static_cast<std::size_t>(joint - source_skin.joints.begin())];
+            const auto slot = std::find(emitted_names.begin(), emitted_names.end(), bone_name);
+            if (bone_name.empty() || slot == emitted_names.end()) {
+                error = "dangling bone '" + source.nodes[static_cast<std::size_t>(dangle.source_node)].name +
+                    "' is not a bone of the emitted skeleton";
+                return false;
+            }
+            stingray::BoneConstraint pendulum;
+            pendulum.bone_slot = static_cast<std::uint32_t>(slot - emitted_names.begin());
+            pendulum.length = dangle.length;
+            pendulum.mass = dangle.mass;
+            pendulum.gravity = dangle.gravity;
+            pendulum.damping = dangle.damping;
+            pendulum.rest_stiffness = dangle.stiffness;
+            pendulum.max_angle_degrees = dangle.max_angle_degrees;
+            if (dangle.jiggle) {
+                pendulum.kind = stingray::BoneConstraint::Kind::Spring;
+                pendulum.stiffness = dangle.stiffness;
+                pendulum.max_stretch = dangle.max_stretch;
+            }
+            pendulums.push_back(pendulum);
+        }
+        set_feature_status(feature_status, "dangling_bones", "emitted");
+    }
+    // Ragdoll handoff: the dynamic node bodies (named after their nodes, see
+    // authored_scene.cpp) form the actor set the ragdoll state creates.
+    std::vector<std::uint32_t> ragdoll_actors;
+    if (!plan.ragdoll_event.empty()) {
+        for (const auto& body : source.asset_definition.node_bodies) {
+            if (body.actor != "dynamic") continue;
+            const auto& name = source.nodes[static_cast<std::size_t>(body.source_node)].name;
+            ragdoll_actors.push_back(stingray::id32_from_id64(name.empty() ? body.id : name));
+        }
+        set_feature_status(feature_status, "ragdoll", "emitted_event_" + plan.ragdoll_event);
+    }
+    std::optional<ResourceKey> rest_animation;
+    if (plan.rest_state) {
+        // A constant key on the root joint; every other channel stays at rest.
+        const auto& skin = emitted_source->skins[selected];
+        if (skin.joints.empty()) { error = "dangling bones need a skin with joints"; return false; }
+        const auto& root = emitted_source->nodes[static_cast<std::size_t>(skin.joints.front())];
+        AnimationInfo rest;
+        rest.name = "rest";
+        AnimationTrack track;
+        track.target_node = skin.joints.front();
+        track.path = AnimationPath::Translation;
+        track.times = {0.0f, 1.0f};
+        track.value_components = 3;
+        for (int key = 0; key < 2; ++key)
+            for (int axis = 0; axis < 3; ++axis) track.values.push_back(root.local_stingray[12 + axis]);
+        rest.tracks.push_back(std::move(track));
+        const auto animation_key = context.generated_key("animation", base + "_rest");
+        stingray::animation::BuiltAnimation animation;
+        if (!stingray::animation::build_skeletal_animation(*emitted_source, skin, rest, animation_key.name,
+                animation, error, &options.animation_fit)) return false;
+        graph.owned.push_back({animation_key, base + "_rest.animation", std::move(animation), {bones}});
+        rest_animation = animation_key;
+        if (plan.ragdoll_event.empty()) {
+            const auto machine_key = context.generated_key("state_machine", base);
+            auto machine = stingray::write_minimal_single_clip_state_machine(machine_key.name, animation_key.name, true, pendulums, bone_count);
+            graph.owned.push_back({machine_key, base + ".state_machine", std::move(machine), {animation_key}});
+        }
+    }
     if (plan.state_machine_animation_index) {
         const auto animation_index = *plan.state_machine_animation_index;
         if (selected == no_skin || animation_index >= source.animations.size()) {
@@ -282,17 +360,21 @@ bool build_glb_resources(const Scene& source, const app::CompileOptions& options
             "animation", base + "_animation_" + std::to_string(animation_index));
         const auto machine_key = context.generated_key("state_machine", base);
         auto machine = stingray::write_minimal_single_clip_state_machine(
-            machine_key.name, animation_key.name, plan.state_machine_looping);
+            machine_key.name, animation_key.name, plan.state_machine_looping, pendulums, bone_count);
         graph.owned.push_back({machine_key, base + ".state_machine", std::move(machine), {animation_key}});
     }
-    if (!plan.state_machine_states.empty()) {
+    if (!plan.state_machine_states.empty() || (rest_animation && !plan.ragdoll_event.empty())) {
         if (selected == no_skin) {
             error = "direct-event state machine plan has no valid selected animation skin";
             return false;
         }
         std::vector<stingray::DirectEventState> states;
         std::set<ResourceKey> dependencies;
-        states.reserve(plan.state_machine_states.size());
+        states.reserve(plan.state_machine_states.size() + 2);
+        if (rest_animation) {
+            states.push_back({"rest", rest_animation->name, true});
+            dependencies.insert(*rest_animation);
+        }
         for (const auto& planned : plan.state_machine_states) {
             if (planned.animation_index >= source.animations.size()) {
                 error = "direct-event state machine plan references an invalid animation";
@@ -303,13 +385,26 @@ bool build_glb_resources(const Scene& source, const app::CompileOptions& options
             states.push_back({planned.name, animation_key.name, planned.looping});
             dependencies.insert(animation_key);
         }
+        auto transitions = plan.state_machine_transitions;
+        if (!plan.ragdoll_event.empty()) {
+            const auto ragdoll_state = states.size();
+            for (std::size_t from = 0; from < ragdoll_state; ++from)
+                transitions.push_back({from, ragdoll_state, plan.ragdoll_event, 0.0f});
+            stingray::DirectEventState ragdoll;
+            ragdoll.name = "ragdoll";
+            ragdoll.ragdoll = true;
+            states.push_back(ragdoll);
+        }
         const auto machine_key = context.generated_key("state_machine", base);
         auto machine = stingray::write_direct_event_state_machine(
-            machine_key.name, states, plan.state_machine_transitions,
-            plan.state_machine_variables, plan.state_machine_selectors);
+            machine_key.name, states, transitions,
+            plan.state_machine_variables, plan.state_machine_selectors, pendulums, bone_count, ragdoll_actors);
         graph.owned.push_back({machine_key, base + ".state_machine", std::move(machine),
             {dependencies.begin(), dependencies.end()}});
     }
+    std::vector<ResourceKey> effects;
+    if (!build_particle_effects(source, context, graph, effects, error)) return false;
+    graph.roots.insert(graph.roots.end(), effects.begin(), effects.end());
     return true;
 }
 }

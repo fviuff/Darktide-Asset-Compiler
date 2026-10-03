@@ -43,8 +43,11 @@ std::string resource_stream_name(const OwnedResourceNode& node, const TargetProf
     const auto* contract = profile.storage_contract(node.key.type);
     if (!contract) return {};
     switch (contract->sidecar) {
-    case TargetSidecarStrategy::HashedTextureStream:
+    case TargetSidecarStrategy::HashedTextureStream: {
+        const auto* preserved = std::get_if<PreservedTexture>(&node.resource);
+        if (preserved && preserved->stream.empty()) return {};
         return stingray::texture::make_texture_stream_name(node.key.name);
+    }
     case TargetSidecarStrategy::HashedMaterialStream: {
         std::ostringstream stream;
         stream << "data/am/" << std::hex << std::nouppercase << std::setfill('0') << std::setw(16)
@@ -83,7 +86,8 @@ bool validate_graph(const ResourceGraph& graph, ResourceClosure& closure, std::s
         return true;
     };
     for (const auto& file : reserved_payloads) if (!check_file(file)) return false;
-    constexpr const char* types[] = {"unit", "bones", "animation", "material", "material", "texture", "state_machine"};
+    constexpr const char* types[] = {"unit", "bones", "animation", "material", "material", "texture", "state_machine",
+                                     "texture", "particles", "unit"};
     for (std::size_t i = 0; i < graph.owned.size(); ++i) {
         const auto& node = graph.owned[i];
         if (!check_key(node.key)) return false;

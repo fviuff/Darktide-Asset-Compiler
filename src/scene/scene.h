@@ -92,7 +92,7 @@ struct TextureBinding {
 };
 
 struct MaterialInfo {
-    enum class Intent { Generated, Emissive, External, Template, Donor };
+    enum class Intent { Generated, Emissive, External, Template, Donor, GameShader };
     std::string name;
     Intent intent = Intent::Generated;
     std::string external_resource;
@@ -100,6 +100,13 @@ struct MaterialInfo {
     std::string donor_family;
     std::string donor_stream_path;
     std::map<std::string, float> donor_variable_overrides;
+    // GameShader: a retail material stream (donor_stream_path) cloned with these
+    // variables (name or #hex IdString32 -> 1..4 floats) and texture channels
+    // (name or #hex -> base_color | normal | orm | emissive glTF image) replaced.
+    std::map<std::string, std::vector<float>> shader_variables;
+    std::map<std::string, std::string> shader_textures;
+    // Retail shader provider/parent material hash -> stream file, shipped as owned copies.
+    std::map<std::uint64_t, std::string> shader_streams;
     std::array<float, 4> base_color{1, 1, 1, 1};
     float metallic = 1.0f;
     float roughness = 1.0f;
@@ -380,6 +387,21 @@ struct SourceFeatureInventory {
     std::vector<std::string> physics_locations;
 };
 
+// A particle effect shipped under the asset's name: authored as a JSON description (systems, initializers,
+// simulators, visualizers; see stingray/particles) or copied from one of the game's effects. The game's
+// materials, units, shaders and textures it uses are shipped as owned copies (edited where the author says so).
+struct ParticleMaterialEdit {
+    std::map<std::string, std::vector<float>> variables; // name or #hex -> 1..4 floats
+    std::map<std::string, std::string> textures;          // channel name or #hex -> image file
+};
+struct ParticleEffectDefinition {
+    std::string name;        // resource name inside the asset's folder
+    std::string description; // the effect as JSON; empty: a copy of `source`
+    std::string source;      // the game's cooked .particles from a limn extract
+    std::string extract;     // that extract folder (material and texture resources are looked up there)
+    std::map<std::uint64_t, ParticleMaterialEdit> materials; // the game's material hash -> edits
+};
+
 struct Scene {
     SourceFeatureInventory source_features;
     std::vector<Primitive> primitives;
@@ -400,6 +422,7 @@ struct Scene {
     std::vector<int> scene_roots;
     std::vector<SkinInfo> skins;
     std::vector<AnimationInfo> animations;
+    std::vector<ParticleEffectDefinition> particle_effects;
     std::vector<std::string> extensions_used;
     std::vector<std::string> extensions_required;
     std::vector<std::string> active_extensions_used;
