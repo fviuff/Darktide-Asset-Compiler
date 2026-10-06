@@ -2,12 +2,15 @@
 #include "stingray/cooked_resource.h"
 #include "stingray/murmur_hash.h"
 #include "stingray/resource_name.h"
+#include "stingray/flow/flow_resource.h"
+#include "stingray/unit/script_data.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <fstream>
 #include <set>
 #include <sstream>
@@ -524,6 +527,7 @@ bool validate_unit_v115(const std::filesystem::path& path, std::string& report,
     }
     if (!zero_u32(r, "SceneGraph trailing vector", report)) return false;
 
+    std::vector<std::uint32_t> mesh_flags;
     std::uint32_t mesh_count = 0;
     if (!r.u32(mesh_count) || mesh_count != geometry_count) {
         report = "invalid: static UNIT MeshObject count must match MeshGeometry count";
@@ -544,7 +548,8 @@ bool validate_unit_v115(const std::filesystem::path& path, std::string& report,
         const bool valid_node_ref = node_ref == renderer_ref && mesh_name == scene_names[renderer_ref];
         if (!valid_node_ref || geometry_ref != expected_ref ||
             skinned != geometries[i].skinned || !valid_skin_ref ||
-            (render_flags != 0x000c2003u && render_flags != (0x000c2003u | 0x00000004u)) ||
+            ((render_flags & ~0x8u) != 0x000c2003u && (render_flags & ~0x8u) != 0x000c2001u &&
+             (render_flags & ~0x8u) != 0x00002002u) ||
             kind != 3 || enabled != 1) {
             report = "invalid: MeshObject is not a packed static or skinned mesh this compiler writes";
             return false;
@@ -561,6 +566,7 @@ bool validate_unit_v115(const std::filesystem::path& path, std::string& report,
             report = "invalid: simple-static MeshObject trailing field changed";
             return false;
         }
+        mesh_flags.push_back(render_flags);
     }
 
     // Actor records: one primary actor, and/or one record per PhysX-collection body.
@@ -573,7 +579,7 @@ bool validate_unit_v115(const std::filesystem::path& path, std::string& report,
     for (std::uint32_t a = 0; a < primary_actor_count; ++a)
         if (!validate_primary_actor(r, scene_node_set, report)) return false;
     for (int i = 0; i < 3; ++i) if (!zero_u32(r, "late static object family", report)) return false;
-    std::uint32_t light_count = 0;
+    std::uint32_t light_count = 0, shadow_lights = 0;
     if (!r.u32(light_count) || light_count > 4096u) { report = "invalid: UNIT light count"; return false; }
     for (std::uint32_t i = 0; i < light_count; ++i) {
         std::uint32_t name = 0, node = 0, flags = 0, type = 0;
@@ -586,10 +592,49 @@ bool validate_unit_v115(const std::filesystem::path& path, std::string& report,
         if (!r.u32(flags) || !r.u32(type)) { report = "invalid: " + r.err; return false; }
         if (type > 1u) { report = "invalid: only omni and spot UNIT lights are emitted"; return false; }
         if (flags & 2u) { report = "invalid: UNIT light is disabled"; return false; }
+        if (flags & 1u) ++shadow_lights;
         if (!r.need(16 + 19 * 4)) { report = "invalid: truncated UNIT light record"; return false; }
         r.p += 16 + 19 * 4;
     }
-    for (int i = 0; i < 7; ++i) if (!zero_u32(r, "late static object family", report)) return false;
+    if (!zero_u32(r, "late static object family", report)) return false;
+    // LOD objects (non-streamed): every LOD mesh carries render flag 0x8 and belongs to one step;
+    // steps cover contiguous, falling screen-height ranges from FLT_MAX.
+    std::uint32_t lod_count = 0;
+    if (!r.u32(lod_count) || lod_count > 256u) { report = "invalid: UNIT LOD object count"; return false; }
+    std::vector<int> lod_owner(mesh_count, 0);
+    for (std::uint32_t i = 0; i < lod_count; ++i) {
+        std::uint32_t name = 0, node = 0, steps = 0, flags = 0, x = 0, order = 0, zero = 0;
+        std::uint64_t id = 0;
+        std::uint8_t streamed = 0;
+        if (!r.u32(name) || !r.u64(id) || !r.u32(node) || !r.u32(steps) || steps == 0 || steps > 32u) { report = "invalid: UNIT LOD object header"; return false; }
+        if (node == 0 || node >= node_count) { report = "invalid: LOD object orientation node is missing"; return false; }
+        float previous = 0.0f;
+        std::uint32_t expected_flags = 0;
+        for (std::uint32_t s = 0; s < steps; ++s) {
+            float from = 0.0f, to = 0.0f;
+            std::uint32_t count = 0, mesh = 0, offset = 0, index = 0;
+            if (!finite_f32(r, from) || !finite_f32(r, to) || !r.u32(count) || count == 0 || count > mesh_count) { report = "invalid: UNIT LOD step"; return false; }
+            if ((s == 0 ? from != std::numeric_limits<float>::max() : from != previous) || !(to < from) || to < 0.0f) { report = "invalid: LOD step ranges must fall from FLT_MAX without gaps"; return false; }
+            previous = to;
+            for (std::uint32_t m = 0; m < count; ++m) {
+                if (!r.u32(mesh) || mesh >= mesh_count) { report = "invalid: LOD step references a missing mesh"; return false; }
+                if (lod_owner[mesh]++ != 0) { report = "invalid: a mesh belongs to more than one LOD step"; return false; }
+                expected_flags |= mesh_flags[mesh];
+            }
+            if (!r.u32(offset) || !r.u32(index) || offset != 0 || index != 0) { report = "invalid: non-streamed LOD step has stream data"; return false; }
+        }
+        float bounds = 0.0f;
+        for (int f = 0; f < 10; ++f) if (!finite_f32(r, bounds)) { report = "invalid: LOD bounding volume is non-finite"; return false; }
+        if (!r.u32(flags) || flags != (expected_flags & ~0x10008u)) { report = "invalid: LOD flags differ from its meshes' render flags"; return false; }
+        if (!r.u32(x) || x > 1u || !r.u32(order) || order != 0 || !r.u32(zero) || zero != 0 || !r.u8(streamed) || streamed != 0) {
+            report = "invalid: UNIT LOD object tail";
+            return false;
+        }
+        (void)name; (void)id;
+    }
+    for (std::uint32_t m = 0; m < mesh_count; ++m)
+        if ((lod_owner[m] != 0) != ((mesh_flags[m] & 0x8u) != 0)) { report = "invalid: LOD render flag 0x8 and LOD step membership disagree"; return false; }
+    for (int i = 0; i < 5; ++i) if (!zero_u32(r, "late static object family", report)) return false;
     std::uint8_t animated = 0;
     if (!r.u8(animated) || animated > 1) {
         report = "invalid: UNIT animation-blender flag is truncated or not boolean";
@@ -629,16 +674,20 @@ bool validate_unit_v115(const std::filesystem::path& path, std::string& report,
     }
 
     std::uint32_t dynamic_size = 0;
-    if (!r.u32(dynamic_size) || dynamic_size != 8 || !r.need(8)) {
-        report = "invalid: current static dynamic-data sentinel is missing";
+    if (!r.u32(dynamic_size) || dynamic_size < 8 || !r.need(dynamic_size)) {
+        report = "invalid: UNIT script data is missing or truncated";
         return false;
     }
-    static constexpr std::array<std::uint8_t, 8> dynamic_expected{0xff,0xff,0xff,0xff,0,0,0,0};
-    if (!std::equal(dynamic_expected.begin(), dynamic_expected.end(), body.begin() + static_cast<std::ptrdiff_t>(r.p))) {
-        report = "invalid: current static dynamic-data sentinel changed";
-        return false;
+    std::size_t data_entries = 0;
+    {
+        const std::vector<std::uint8_t> data(body.begin() + static_cast<std::ptrdiff_t>(r.p),
+                                             body.begin() + static_cast<std::ptrdiff_t>(r.p + dynamic_size));
+        json::Value decoded;
+        std::string error;
+        if (!stingray::unit::decode_script_data(data, decoded, error)) { report = "invalid: UNIT script data: " + error; return false; }
+        data_entries = decoded.members.size();
     }
-    r.p += 8;
+    r.p += dynamic_size;
     std::uint32_t visibility_group_count = 0;
     if (!r.u32(visibility_group_count) || visibility_group_count > 4096u) { report = "invalid: UNIT visibility group count"; return false; }
     std::set<std::uint32_t> visibility_names;
@@ -649,8 +698,30 @@ bool validate_unit_v115(const std::filesystem::path& path, std::string& report,
         for (std::uint32_t m = 0; m < count; ++m)
             if (!r.u32(mesh) || mesh >= geometry_count) { report = "invalid: visibility group references a missing mesh"; return false; }
     }
-    if (!zero_u32(r, "flow", report) ||
-        !zero_u32(r, "flow dynamic data", report)) return false;
+    // unit flow: the graph must decode (and re-encode identically) as the game's graphs do
+    std::size_t flow_nodes = 0;
+    {
+        std::array<std::vector<std::uint8_t>, 2> blobs;
+        for (auto& blob : blobs) {
+            std::uint32_t size = 0;
+            if (!r.u32(size) || !r.need(size)) { report = "invalid: UNIT flow data is truncated"; return false; }
+            blob.assign(body.begin() + static_cast<std::ptrdiff_t>(r.p), body.begin() + static_cast<std::ptrdiff_t>(r.p + size));
+            r.p += size;
+        }
+        if (blobs[0].empty() != blobs[1].empty()) { report = "invalid: UNIT flow and flow dynamic data must come together"; return false; }
+        if (!blobs[0].empty()) {
+            json::Value graph;
+            std::vector<std::uint8_t> flow_again, dynamic_again;
+            std::string error;
+            if (!stingray::flow::decode(blobs[0], blobs[1], graph, error) ||
+                !stingray::flow::encode(graph, flow_again, dynamic_again, error) ||
+                flow_again != blobs[0] || dynamic_again != blobs[1]) {
+                report = "invalid: UNIT flow graph does not decode: " + error;
+                return false;
+            }
+            flow_nodes = graph.find("nodes")->items.size();
+        }
+    }
 
     std::uint32_t pre_physics_size = 0;
     if (!r.u32(pre_physics_size) || pre_physics_size != 4 || !r.need(4)) {
@@ -724,8 +795,11 @@ bool validate_unit_v115(const std::filesystem::path& path, std::string& report,
        << primary_actor_count << " physics actor(s)";
     if (collection_actor_count) ss << " (" << collection_actor_count << " in PhysX collection)";
     ss << ", ";
-    if (light_count != 0) ss << light_count << " light(s), ";
+    if (light_count != 0) ss << light_count << " light(s)" << (shadow_lights ? " (" + std::to_string(shadow_lights) + " casting shadows)" : std::string()) << ", ";
     if (visibility_group_count != 0) ss << visibility_group_count << " visibility group(s), ";
+    if (lod_count != 0) ss << lod_count << " LOD object(s), ";
+    if (flow_nodes != 0) ss << "flow " << flow_nodes << " node(s), ";
+    if (data_entries != 0) ss << data_entries << " data value(s), ";
     if (simple_tracks != 0) ss << "simple animation " << simple_tracks << " track(s), ";
     ss << file_bytes.size() << " bytes";
     report = ss.str();

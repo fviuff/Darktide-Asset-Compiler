@@ -52,6 +52,10 @@ The compiler reads the normal gltf style pbr setup: base color, metallic, roughn
 
 A single emission shader plugged straight into the output makes a cheap self lit material with no textures needed.
 
+Faces only show from the front in game. For leaves, cloth, flat signs and other thin stuff tick "Double-sided" on the material, then the back gets added as extra triangles. Blender's own backface culling setting doesn't matter for this.
+
+Making a weapon or gear? Tick "Weapon or gear materials" in the build box. Your materials then use the game's weapon shaders, so level stuff like snow and dirt decals doesn't land on them, same as the game's own weapons. Leave it off for props that stand around in a level. (Alpha clip and see-through materials stay as they are.) Glow is toned down to the game's weapon level: emission strength 1 is a normal weapon glow, go higher for a brighter one (too high and it turns white).
+
 If you want to use a material that already exists in the game (or in your mod), set the material intent to use external material and type its resource path.
 
 For glass, water, holograms, glowing or pulsing surfaces, crystal, fur and the like, set the intent to Game shader and pick one. It copies one of the game's own materials using that shader. "Values" changes its settings, e.g. `color=1,0.2,0.1; opacity=0.8` (the panel lists what the shader has and its current values). "Textures" puts your images into its texture slots, e.g. `bca=base_color; nm=normal` (orm and emissive work too). Settings without a readable name show up as `#1234abcd`, and you can set those the same way. It reads the game's files, so point "Darktide folder" at your install if it isn't found. The shader itself is copied into your asset too, so it works anywhere, not just where the game happens to have it loaded. Unlit color draws its color as raw brightness: around 0.1 per channel is a full color, 1 and up blows out to white.
@@ -60,11 +64,66 @@ Texture transforms: offsets, 90 degree turns and flips are fine, fractional scal
 
 ## Lights
 
-Point and spot lamps in the collection become lights on the unit and move with whatever they're parented to. Brightness is blender watts times 60, so a freshly added 10 W lamp is a normal game lamp (600). Color comes straight from the lamp, the range is 8 m unless the light has a custom distance, and they don't cast shadows yet. Sun lamps are skipped. `Unit.light(unit, index)` plus the `Light.*` functions change them at runtime.
+Point and spot lamps in the collection become lights on the unit and move with whatever they're parented to. Brightness is blender watts times 60, so a freshly added 10 W lamp is a normal game lamp (600). Color comes straight from the lamp and the range is 8 m unless the light has a custom distance. Lamps cast shadows when their Shadow box is ticked (blender's default), untick it for cheap fill lights. Sun lamps are skipped. `Unit.light(unit, index)` plus the `Light.*` functions change them at runtime.
+
+## Unit data
+
+Units can carry their own values your scripts read with `Unit.get_data(unit, "name")`, like the game's pickups do (`pickup_type` and so on). Select the asset collection in the outliner, open the collection properties tab, and add them under custom properties. Text, numbers, true/false all work. For groups and lists set the property type to python and type the value like `{"speed": 2.5}` or `[1, 2, 3]`. A group gives you nested values (`Unit.get_data(unit, "group", "name")`) and a list gives you values by number, starting at 1 (`Unit.get_data(unit, "list", 1)`).
 
 ## Visibility groups
 
 Type a name into "Visibility group" on an object and its meshes, plus every mesh parented under it, can be hidden and shown together: `Unit.set_visibility(unit, "name", false)`. Handy for variants, a helmet visor, a lid, that kind of thing. An empty works fine as the group holder.
+
+## Flow (things that happen by themselves or on an event)
+
+Flow is the little node graph a unit carries, same idea as the flow editor in stingray. It's how game units start their effects when they spawn or hide a part when a script tells them to.
+
+1. In the build box click the + next to "Flow". That makes a flow for this asset with a "Unit Spawned" node already in it.
+2. Open a node editor (any editor area, switch its type to node editor) and pick "Darktide Flow" as the tree type at the top, then your flow.
+3. Shift+a adds nodes. Yellow sockets are events (when something happens), the rest are values. Connect events left to right.
+
+The nodes:
+
+- Unit Spawned: fires once when the unit spawns.
+- Unit Unspawned: fires when the unit gets destroyed, e.g. to leave an effect behind.
+- Flow Event: fires when your mod calls `Unit.flow_event(unit, "name")`. Type the name on the node.
+- Particle Effect: create plays it, stop stops spawning new particles, kill removes it. "effect" is the resource name of a particle effect on an empty in this same asset (just the name you gave it), or a full path. "object" is the node it sits on, e.g. the name of an empty.
+- Set Visibility: shows or hides a visibility group (empty group = the whole unit).
+- Animation Event: sends an event to the unit's state machine.
+- Delay, Once, Gate: wait, let something through only once, or let events through while open.
+- Branch: fires true or false depending on its condition.
+- Compare: compares a with b and fires every output that holds (less, less or equal, equal, greater or equal, greater).
+- Fork: fires out 1 to out 8 one after the other.
+- Counter: holds a number. It starts at start, add and subtract change it by step, reset puts it back. Its value output can go into a Compare, e.g. to do something on the third hit.
+- Random Number, Vector3: a random number between min and max, or a vector3 from x, y, z.
+- Get Mesh, Get Material, Set Material Variable: change a material while the unit is out there. Get Mesh takes the object's name, Get Material the material's name (both as named in blender; an object with several materials is one mesh per material, the name gives the first, `name_p1` the second and so on), Set Material Variable the variable. Glowing materials with textures or a base color have `intensity` (brightness) and `emissive_color`, a plain emission shader material has `emissive_intensity_lumen` and `emissive_color`, and a game shader material has the names its Values list shows. Pick Number or Color / vector on it for the kind of value.
+- Get Unit Data (bool / number): reads a value from the unit's data (see Unit data), e.g. into a Branch.
+- Get Light, Set Light Intensity, Set Light Color: change a lamp of the unit while it's out there, e.g. a flickering or alarm light. Get Light takes the lamp's name in blender. Intensity is in the same units as the export (blender watts times 60), color is red, green, blue from 0 to 1.
+- Call Lua: runs a lua function when its event comes in. Type the function name, then list what it gets under Inputs and what it gives back under Outputs as `name:kind` with commas, e.g. `unit:unit, amount:float` (kinds: unit, bool, uint, float, vector3, quaternion, string, name). Every name becomes a socket. Under Events list the output events, `out` by default.
+
+A unit input you leave unconnected means the unit itself.
+
+If a unit's flow starts effects, release its custom assets package a frame after you destroy the unit, not in the same frame. The effect goes away on the next world update and still uses the package until then (closing the game unloads released packages right away and crashes on that).
+
+The function lives in `FlowCallbacks`, the same table the game's own flow functions are in, so your mod adds it like this:
+
+```lua
+FlowCallbacks = FlowCallbacks or {}
+FlowCallbacks.my_function = function(params)
+    -- params.unit, params.amount ... (plus params.node_id)
+    return { doubled = params.amount * 2, big = params.amount > 2 }
+end
+```
+
+The table you return fills the outputs by name. An event fires when you set it to true in there, `out` fires unless you set it to false. The game's own functions work too, e.g. `set_unit_material_scalar` with inputs `unit:unit, material_name:string, variable_name:string, scalar:float` changes a value of one of the unit's materials.
+
+## Shadows and shadow-only meshes
+
+Untick "Casts shadow" on an object and its meshes (plus everything parented under it) draw without a shadow, good for glowy bits and small details. Untick "Visible" instead and it only shows up in shadows, so you can give a detailed model a cheap simple shadow: put a low poly copy next to it with Visible off, and turn Casts shadow off on the detailed one.
+
+## LODs (simpler versions far away)
+
+Make your model a few times with less and less detail. On each version type the same name into "LOD group" (use `lod`, that's what the game's units use), set "Level" (0 = full detail, 1 = simpler, and so on) and "Visible down to": how much of the screen height the thing has to fill before the next level takes over (the game uses stuff like 1.8 / 1.1 / 0.2, or 0.5 / 0.33 / 0.25). Give the last level 0 so it never disappears. Everything parented under a version belongs to that version. Without LODs the full model just always draws, which is fine for most things.
 
 ## Dangling bits
 
@@ -74,11 +133,22 @@ Switch the mode to Jiggle for things that should bounce in place instead of swin
 
 It runs inside the unit's animation state machine, so your mod needs `Unit.enable_animation_state_machine(unit)` after spawning (units without animations get a still state made for them). There is no real cloth simulation in the game; this is what it uses instead.
 
+## Aiming bones
+
+A head that follows the player, a turret that tracks something, a gun arm pointing at a target: select the bone at the end of what should point (the head, or a small bone at the muzzle), open bone properties and tick "Darktide Aim". Give the target a name and list under Turn the bones that turn toward it, with how much each one takes, e.g. on a darktide skeleton with `j_head` ticked: `j_spine2:0.2, j_neck:1` (leave it empty and the bone's parent turns). The ticked bone itself can't be in the list, it's the end that points. Your mod moves the target every frame, in world positions, the same way the game aims its enemies:
+
+```lua
+local target = Unit.animation_find_constraint_target(unit, "aim_target")
+Unit.animation_set_constraint_target(unit, target, position_to_look_at)
+```
+
+It runs in the state machine like dangling bits, so `Unit.enable_animation_state_machine(unit)` after spawning.
+
 ## Particle effects
 
 Particle effects live on an empty. You can build one from scratch or start from any of the game's own effects (fire, sparks, smoke, steam, muzzle flashes...) and change whatever you like. The materials, shaders and textures an effect draws with come along as copies, so it works anywhere your asset is loaded.
 
-1. Extract the game files with limn like in the rigging section, but with `particles material texture unit` at the end instead (you can extract into the same folder). Set the game extract folder and the compiler path.
+1. Extract the game files with limn like in the rigging section further down, but with `particles material texture unit` at the end instead (you can extract into the same folder). Set the game extract folder and the compiler path.
 2. Add an empty to your asset: mouse over the 3d view, shift+a > empty > plain axes. In the properties editor, object tab (the orange square), tick "Darktide Particle Effect".
 3. Either click the + next to the systems list for a new system (small sparks rising from a point), or type a game effect's resource path, e.g. `content/fx/particles/environment/brazier_01`, and click "Import".
 4. Edit it. It works like the Stingray particle editor:
@@ -115,7 +185,14 @@ Body behavior options:
 
 Heads up: simulated bodies collide with the level and props but not with players. That's how the game's own loose props work too. If players need to bump into it (like a door), make it animated with fixed or moved externally collision instead.
 
-For things made of several parts, turn on body on each part object, give each one a collider, and connect them with an empty set to fixed, hinge or ragdoll under joint (body a / body b). A hinge turns around the empty's x axis, so point that along the hinge.
+For things made of several parts, turn on body on each part object, give each one a collider, and connect them with an empty set to a joint type under joint (body a / body b):
+- fixed: glued together (until it breaks, see below)
+- hinge: turns around the empty's x axis, so point that along the hinge. Limit twist stops it at an angle, like a door against its frame
+- slider: slides along the empty's x axis, like a drawer. Limit travel sets how far, in meters from where it sits in blender
+- ball: turns freely in every direction
+- ragdoll: swings and twists within the swing and twist limits, like a body joint
+
+Spring pulls the joint back to how it sits in blender, so a door swings shut by itself or a drawer slides back in, and spring damping makes it settle instead of bouncing (a door of 6 kg: spring 20, damping 4). Break force and break torque make the joint snap when it gets pushed or twisted harder than that (in newtons, 0 = never), for things that should come apart.
 
 Ragdolls: parent a collider box to each bone that should flop (bone parenting), turn on body (simulated) on the boxes and join neighbours with ragdoll joints. The body then drives its bone, and the skinned mesh follows. As is, it goes limp the moment it spawns. Type an event name into "Ragdoll event" to keep it animating instead until your mod calls `Unit.animation_event(unit, "that name")` (after `Unit.enable_animation_state_machine(unit)`), the same way the game's own enemies switch to ragdoll.
 
@@ -147,6 +224,24 @@ For more than one animation, add states (one clip each) and transitions in the a
 Unit.enable_animation_state_machine(unit)
 Unit.animation_event(unit, "walk")
 ```
+
+To mix clips smoothly (walk into run by speed) tick "Blend" on a state instead of picking one clip. Add a float variable (e.g. `speed` from 1 to 2), set the state's variable to its number and list the clips as `clip:value`, e.g. `1:1, 2:2`. A clip plays fully when the variable sits on its value and fades into its neighbours in between. Change it from your mod:
+
+```lua
+Unit.animation_set_variable(unit, Unit.animation_find_variable(unit, "speed"), 1.5)
+```
+
+Tick 2D for a blend by two variables at once, like strafing (x sideways, y forward): pick both variables and list the clips as `clip:x:y`, e.g. `0:0:0, 1:1:0, 2:-1:0, 3:0:1` for standing, right, left and forward. Put the clips on a grid (the same few x values and y values), each clip then fades into the ones next to it in both directions.
+
+A state can send events itself. "Events at" sends them when its clip reaches a time, as `seconds:event`, e.g. `0.4:hit` (the transitions react the same as to `Unit.animation_event`, in every layer). "Exit event" goes out once just before the clip ends, which is how a clip that plays once gets back to idle: give the attack state exit event `done`, add a transition from it back to idle on `done`, and set Seconds left to the transition's blend time so idle is fully in when the attack ends.
+
+For variety tick "Random" on a state: it plays one of several clips picked at random. List them under Clips as `clip:weight`, e.g. `0:3, 1:1` plays clip 0 three times as often as clip 1. Pick says when it picks again: every loop, every loop but never the same clip twice in a row, or once when the state starts.
+
+Every state has a speed, 1 plays it as animated, 2 twice as fast. Tick "Speed from variable" and pick a float variable instead to change it while it plays, like a walk that speeds up with the character, by setting that variable from your mod the same way.
+
+Layers play states on top of each other, like waving while walking. Set a state's Layer to 1 (or higher) and it plays over layer 0 instead of replacing it. Each layer runs on its own: it starts in its first state, and its transitions stay inside it, but an event reaches every layer at once. Usually a layer starts in an Empty state (plays nothing, so the layers below show through) with a transition to the real one and back. Bones picks what a state moves, by bone name: on a darktide skeleton `j_spine1` is the upper body (a bone always takes everything below it along), `j_neck:0.5` moves the neck and head halfway, and later entries win, so `j_spine1, j_leftshoulder:0` is the upper body without the left arm. Leave it empty for the whole body. Additive adds the clip on top of what plays below instead of replacing it, good for a breathing or flinch motion.
+
+The clips in a blend play in step: they all get stretched to the length of the first one in the list. So blend clips of the same kind, like a walk cycle and a run cycle with the feet hitting the ground at the same points, and give standing around its own state with a transition. The mix follows the variable right away, so for a smooth change move the variable a bit every frame instead of jumping it.
 
 ## Rigging to a darktide skeleton
 

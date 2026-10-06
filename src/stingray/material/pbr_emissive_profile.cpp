@@ -13,6 +13,10 @@ constexpr std::uint32_t kOrm = 0x8655079cu;
 constexpr std::uint32_t kIntensity = 0x32f447e5u;
 constexpr std::uint32_t kEmissiveColor = 0xc985395au;
 constexpr std::uint32_t kMultiplier = 0x519c1733u;
+constexpr std::uint32_t kIsMetallic = 0xcffc9764u;
+constexpr std::uint32_t kTintColor = 0xe332a53bu;
+constexpr std::uint32_t kTintOpacity = 0xc091d6c5u;
+constexpr std::uint32_t kTintLevels = 0xce2772f4u;
 
 void append_float(std::vector<std::uint8_t>& data, float value) {
     const auto* bytes = reinterpret_cast<const std::uint8_t*>(&value);
@@ -51,6 +55,23 @@ bool build_pbr_emissive_profile(const PbrEmissiveProfileSpec& spec, MaterialStre
         {kNormal, spec.texture_hashes[2]},
         {kOrm, spec.texture_hashes[3]},
     };
+    if (spec.weapon) {
+        // layout of 11 of the game's 18 basic_weapon_emissive materials (72 bytes)
+        material.variables = {
+            {0, 0, kMultiplier, 0, 0},
+            {0, 0, kIsMetallic, 4, 0},
+            {2, 0, kTintColor, 8, 0},
+            {0, 0, kTintOpacity, 68, 0},
+            {2, 0, kTintLevels, 24, 0},
+            {0, 0, kIntensity, 64, 0},
+            {2, 0, kEmissiveColor, 52, 0},
+        };
+        for (const float value : {spec.multiplier, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f,
+                                  0.0f, 0.0f, 0.0f, 0.0f, spec.color[0], spec.color[1], spec.color[2],
+                                  spec.intensity, 0.0f})
+            append_float(material.variable_data, value);
+        return build_inherited_material(material, out, error);
+    }
     material.variables = {
         {0, 0, kIntensity, 32, 0},
         {2, 0, kEmissiveColor, 20, 0},

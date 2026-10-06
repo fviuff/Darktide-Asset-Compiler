@@ -97,8 +97,7 @@ set(WEBP_LINK_STATIC ON CACHE BOOL "" FORCE)
 add_subdirectory("${DARKTIDE_LIBWEBP_DIR}" "${CMAKE_BINARY_DIR}/third_party/libwebp" EXCLUDE_FROM_ALL)
 
 # MSVC uses one complete SDK graph for cooking, simulation and serialization.
-# Other toolchains retain the established cooking-only backend until the full
-# upstream runtime has been verified with them.
+# Other toolchains use the cooking-only backend.
 if(MSVC)
     include(cmake/PhysXRuntime.cmake)
     darktide_add_physx_runtime()
@@ -260,6 +259,7 @@ set(DARKTIDE_COMPILER_CORE_SOURCES
     src/processing/scene_scaler.cpp
     src/processing/dangle_canonicalizer.cpp
     src/processing/root_motion.cpp
+    src/processing/back_faces.cpp
     src/processing/material_canonicalizer.cpp
     src/processing/uv1_material_canonicalizer.cpp
     src/processing/attribute_canonicalizer.cpp
@@ -273,13 +273,18 @@ set(DARKTIDE_COMPILER_CORE_SOURCES
     src/stingray/binary_writer.cpp
     src/stingray/cooked_resource.cpp
     src/stingray/particles/particles_resource.cpp
+    src/stingray/flow/flow_resource.cpp
+    src/stingray/flow/flow_authoring.cpp
     src/stingray/physics/physx_cooking.cpp
     src/stingray/physics/authored_physics.cpp
     src/stingray/unit/unit_v115.cpp
+    src/stingray/unit/script_data.cpp
     src/stingray/unit/unit_identity.cpp
     src/stingray/bones/bones_writer.cpp
     src/stingray/bones/bone_identity.cpp
     src/stingray/material/material_v61.cpp
+    src/stingray/material/shader_compiler.cpp
+    src/stingray/material/shader_section.cpp
     src/stingray/material/emissive_profile.cpp
     src/stingray/material/pbr_emissive_profile.cpp
     src/stingray/material/mask_profile.cpp

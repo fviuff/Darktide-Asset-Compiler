@@ -20,6 +20,25 @@ struct StateMachineStateOption {
     std::string name;
     int clip_index = -1;
     bool looping = true;
+    // Blend state: clips weighted by how close the variable is to each clip's value (empty = one clip).
+    std::vector<std::pair<int, float>> blend;
+    int blend_variable = -1;
+    int blend_variable2 = -1;            // 2D blend: second variable; blend_value2 holds each clip's second value
+    std::vector<float> blend_value2;
+    float speed = 1.0f;       // playback speed, or the variable below when set
+    int speed_variable = -1;
+    // Random state: blend holds clip:weight pairs; 0 pick on entry, 1 every loop, 2 every loop without repeating
+    bool random = false;
+    int randomization = 1;
+    // Layer (0 = base); empty states play nothing so the layers below show. Mask: bone name -> weight, each bone
+    // with everything below it, later entries win; empty = whole body. Additive adds the clip on top.
+    int layer = 0;
+    bool empty = false;
+    std::vector<std::pair<std::string, float>> mask;
+    bool additive = false;
+    std::vector<std::pair<float, std::string>> events_at;   // seconds into the clip -> state machine event
+    std::string exit_event;                                 // sent when exit_blend seconds are left
+    float exit_blend = 0.2f;
 };
 struct StateMachineVariableOption {
     std::string name;

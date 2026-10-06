@@ -387,6 +387,14 @@ constexpr RetailShaderMaterial kMaskProvider{0xe03ea781c4162268ull, "data/79/792
 constexpr RetailShaderMaterial kTransparentParent{0x40bc90ba5e9b0852ull, "data/5d/5d45d4077a699788", 0};
 constexpr RetailShaderMaterial kTransparentProvider{0x1a7adfef3dbd8e95ull, "data/11/115f106a06003fa6",
                                                     kTransparentParent.hash};
+// The weapon twins of substance_basic / substance_basic_emissive (same parents, texture channels and code; their
+// passes leave out the deferred-decal stencil groups, so level decals such as snow skip them).
+constexpr RetailShaderMaterial kBasicParent{0xcfe7f61e8e475a1aull, "data/38/386cdec6ddb5427a", 0};
+constexpr RetailShaderMaterial kBasicWeaponProvider{0x5bfe425b2dc87c07ull, "data/47/4742099a01d40ff5",
+                                                    kBasicParent.hash}; // content/parent_materials/basic_weapon
+constexpr RetailShaderMaterial kEmissiveParent{0xe04dba68a38d1429ull, "data/73/73fecec595ff39d4", 0};
+constexpr RetailShaderMaterial kEmissiveWeaponProvider{0x9811824eb2be4b5eull, "data/67/670045f9982e3cb8",
+                                                       kEmissiveParent.hash}; // .../basic_weapon_emissive
 
 std::uint32_t stream_u32(const std::vector<std::uint8_t>& bytes, std::size_t offset) {
     std::uint32_t value; std::memcpy(&value, bytes.data() + offset, 4); return value;
@@ -979,14 +987,19 @@ bool build_core_materials(const Scene& scene, const CompilationContext& context,
             return true;
         }
         if (!emits) {
-            add_basic_externals();
+            ResourceKey provider = basic_shader_provider, parent = basic_parent_material;
+            if (material.weapon) {
+                if (!own_shader_family(context, graph, kBasicWeaponProvider, kBasicParent, provider, parent, error)) return false;
+            } else {
+                add_basic_externals();
+            }
             stingray::material::InheritedMaterialSpec spec;
-            spec.shader_provider_material_hash = stingray::id64(basic_shader_provider.name);
-            spec.parent_material_hash = stingray::resource_name_hash(basic_parent_material.name);
+            spec.shader_provider_material_hash = stingray::id64(provider.name);
+            spec.parent_material_hash = stingray::resource_name_hash(parent.name);
             spec.surface_material = material.surface_material;
             const std::array<std::size_t, 3> image_indices{{0, 2, 3}};
             const std::array<const char*, 3> basic_channels{{"bc", "nm", "orm"}};
-            std::vector<ResourceKey> dependencies{basic_shader_provider, basic_parent_material};
+            std::vector<ResourceKey> dependencies{provider, parent};
             for (std::size_t i = 0; i < basic_channels.size(); ++i) {
                 const auto texture_stem = stem + "_" + basic_channels[i];
                 const auto key = context.generated_key("texture", texture_stem);
@@ -1002,13 +1015,22 @@ bool build_core_materials(const Scene& scene, const CompilationContext& context,
             bindings.push_back({slot, key.name});
             return true;
         }
-        add_emissive_externals();
+        ResourceKey provider = shader_provider_material, parent = parent_material;
+        if (material.weapon) {
+            if (!own_shader_family(context, graph, kEmissiveWeaponProvider, kEmissiveParent, provider, parent, error)) return false;
+        } else {
+            add_emissive_externals();
+        }
         stingray::material::PbrEmissiveProfileSpec spec;
         spec.texture_hashes = {};
         spec.color = material.emissive;
-        spec.intensity = material.emissive_strength;
+        // Game weapons glow about a quarter as bright as world props (intensity x multiplier x brightest colour
+        // channel: median 0.3 over basic_weapon_emissive materials, 1.1 over substance_basic_emissive), so strength 1
+        // gives a typical weapon glow instead of one that clips to white up close.
+        spec.intensity = material.emissive_strength * (material.weapon ? 0.25f : 1.0f);
         spec.surface_material = material.surface_material;
-        std::vector<ResourceKey> dependencies{shader_provider_material, parent_material};
+        spec.weapon = material.weapon;
+        std::vector<ResourceKey> dependencies{provider, parent};
         for (std::size_t i = 0; i < channels.size(); ++i) {
             const auto texture_stem = stem + "_" + channels[i];
             const auto key = context.generated_key("texture", texture_stem);
@@ -1019,6 +1041,10 @@ bool build_core_materials(const Scene& scene, const CompilationContext& context,
         const auto key = context.generated_key("material", stem);
         stingray::material::MaterialStream resource;
         if (!stingray::material::build_pbr_emissive_profile(spec, resource, error)) return false;
+        if (material.weapon) {
+            resource.shader_provider_material_hash = stingray::resource_name_hash(provider.name);
+            resource.parent_material_hash = stingray::resource_name_hash(parent.name);
+        }
         graph.owned.push_back({key, stem + ".material", std::move(resource), std::move(dependencies)});
         bindings.push_back({slot, key.name});
         return true;

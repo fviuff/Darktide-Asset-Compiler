@@ -256,13 +256,20 @@ bool lower_rigid_animation(const Scene& source, Scene& lowered, std::string& err
         joint.source_node = remap[static_cast<std::size_t>(joint.source_node)];
     for (auto& collider : result.asset_definition.colliders)
         collider.source_node = remap[static_cast<std::size_t>(collider.source_node)];
+    for (auto& member : result.asset_definition.visibility_groups)
+        member.source_node = remap[static_cast<std::size_t>(member.source_node)];
+    for (auto& level : result.asset_definition.lod_levels)
+        level.source_node = remap[static_cast<std::size_t>(level.source_node)];
+    for (auto& setting : result.asset_definition.render_settings)
+        setting.source_node = remap[static_cast<std::size_t>(setting.source_node)];
+    for (auto& node : result.asset_definition.shadow_lights) node = remap[static_cast<std::size_t>(node)];
     for (auto& primitive : result.collider_primitives) {
         if (primitive.source_node >= 0) primitive.source_node = remap[static_cast<std::size_t>(primitive.source_node)];
         if (primitive.collision_object >= 0) primitive.collision_object = remap[static_cast<std::size_t>(primitive.collision_object)];
         if (primitive.render_owner_node >= 0) primitive.render_owner_node = remap[static_cast<std::size_t>(primitive.render_owner_node)];
     }
     SkinInfo skin;
-    skin.name = "__experimental_rigid_animation_skin";
+    skin.name = "__rigid_animation_skin";
     skin.skeleton_root = result.scene_roots.size() == 1 ? result.scene_roots.front() : -1;
     skin.joints.resize(order.size());
     std::iota(skin.joints.begin(), skin.joints.end(), 0);

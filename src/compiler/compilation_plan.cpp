@@ -417,15 +417,79 @@ CompilationPlan plan_compilation(const Scene& scene, const CompileOptions& optio
                 plan.gaps.push_back("state-machine state names must be unique and nonempty");
                 continue;
             }
-            auto animation = std::find_if(plan.animation_indices.begin(), plan.animation_indices.end(),
-                [&](std::size_t index) {
-                    return scene.animations[index].source_index == authored.clip_index;
-                });
+            const auto emitted = [&](int clip) {
+                return std::find_if(plan.animation_indices.begin(), plan.animation_indices.end(),
+                    [&](std::size_t index) { return scene.animations[index].source_index == clip; });
+            };
+            if (authored.layer < 0) {
+                plan.gaps.push_back("state-machine layer numbers start at 0");
+                continue;
+            }
+            const auto layered = [&](PlannedStateMachineState state) {
+                state.layer = static_cast<std::size_t>(authored.layer);
+                state.empty = authored.empty;
+                state.mask = authored.mask;
+                state.additive = authored.additive;
+                state.events_at = authored.events_at;
+                state.exit_event = authored.exit_event;
+                state.exit_blend = authored.exit_blend;
+                plan.state_machine_states.push_back(std::move(state));
+            };
+            if (authored.empty) {
+                layered({authored.name, 0, authored.looping, {}, 0, authored.speed, authored.speed_variable});
+                continue;
+            }
+            if (!authored.blend.empty()) {
+                PlannedStateMachineState state{authored.name, 0, authored.looping, {}, 0, authored.speed, authored.speed_variable};
+                for (const auto& [clip, value] : authored.blend) {
+                    const auto animation = emitted(clip);
+                    if (animation == plan.animation_indices.end()) break;
+                    state.blend.push_back({*animation, value});
+                }
+                if (state.blend.size() != authored.blend.size()) {
+                    plan.gaps.push_back("state-machine blend clip index must identify an emitted clip");
+                    continue;
+                }
+                state.random = authored.random;
+                if (authored.random) {
+                    if (authored.randomization < 0 || authored.randomization > 2 ||
+                        std::any_of(authored.blend.begin(), authored.blend.end(), [](const auto& c) { return !(c.second > 0.0f); })) {
+                        plan.gaps.push_back("state-machine random state needs weights above 0 and a known pick mode");
+                        continue;
+                    }
+                    state.randomization = static_cast<std::uint32_t>(authored.randomization);
+                    layered(std::move(state));
+                    continue;
+                }
+                if (authored.blend_variable < 0 ||
+                    static_cast<std::size_t>(authored.blend_variable) >= options.state_machine_variables.size()) {
+                    plan.gaps.push_back("state-machine blend state needs an existing --sm-variable index");
+                    continue;
+                }
+                state.blend_variable = static_cast<std::size_t>(authored.blend_variable);
+                if (authored.blend_variable2 >= 0) {
+                    if (static_cast<std::size_t>(authored.blend_variable2) >= options.state_machine_variables.size() ||
+                        authored.blend_value2.size() != authored.blend.size()) {
+                        plan.gaps.push_back("state-machine 2D blend state needs two existing --sm-variable indices and X:Y per clip");
+                        continue;
+                    }
+                    state.blend_variable2 = authored.blend_variable2;
+                    state.blend_value2 = authored.blend_value2;
+                }
+                layered(std::move(state));
+                continue;
+            }
+            auto animation = emitted(authored.clip_index);
             if (animation == plan.animation_indices.end()) {
                 plan.gaps.push_back("state-machine state clip index must identify an emitted clip");
                 continue;
             }
-            plan.state_machine_states.push_back({authored.name, *animation, authored.looping});
+            layered({authored.name, *animation, authored.looping, {}, 0, authored.speed, authored.speed_variable});
+        }
+        for (const auto& state : plan.state_machine_states) {
+            if (!std::isfinite(state.speed) || (state.speed_variable >= 0 &&
+                static_cast<std::size_t>(state.speed_variable) >= options.state_machine_variables.size()))
+                plan.gaps.push_back("state-machine state speed must be finite and its variable an existing --sm-variable index");
         }
         std::set<std::string> variable_names;
         for (const auto& variable : options.state_machine_variables) {
@@ -502,9 +566,9 @@ CompilationPlan plan_compilation(const Scene& scene, const CompileOptions& optio
             plan.state_machine_animation_index.reset();
         }
     }
-    if (!scene.asset_definition.dangles.empty() || !plan.ragdoll_event.empty()) {
+    if (!scene.asset_definition.dangles.empty() || !scene.asset_definition.aims.empty() || !plan.ragdoll_event.empty()) {
         if (!plan.emit_unit || !plan.skin_index)
-            plan.gaps.push_back("dangling bones and ragdolls need a unit with a skinned mesh");
+            plan.gaps.push_back("dangling and aiming bones and ragdolls need a unit with a skinned mesh");
         else if (!plan.state_machine_animation_index && plan.state_machine_states.empty())
             plan.rest_state = true;
     }

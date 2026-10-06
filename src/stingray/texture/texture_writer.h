@@ -49,12 +49,15 @@ struct CookedTexture {
 };
 
 bool decode_image_rgba(const std::vector<std::uint8_t>& bytes, const std::string& mime_type, ImageRGBA& out, std::string& error);
-bool normalize_image_for_verified_family(const ImageRGBA& source, const TextureProfile& profile, ImageRGBA& out, bool& changed, std::string& error);
-bool normalize_image_for_verified_family(const ImageRGBA& source, ImageRGBA& out, bool& changed, std::string& error);
+bool normalize_image_for_family(const ImageRGBA& source, const TextureProfile& profile, ImageRGBA& out, bool& changed, std::string& error);
+bool normalize_image_for_family(const ImageRGBA& source, ImageRGBA& out, bool& changed, std::string& error);
 
 std::string make_texture_stream_name(const std::string& resource_name);
 
 bool configure_oodle(const std::filesystem::path& dll_or_game_directory, std::string& error);
+
+// Oodle Kraken compression with the game's DLL (checked by unpacking it again).
+bool oodle_compress(const std::vector<std::uint8_t>& input, std::vector<std::uint8_t>& packed, std::string& error);
 
 // The Darktide install (DARKTIDE_GAME_ROOT, else from the configured Oodle DLL, else the default Steam folder).
 // Empty when unknown. Retail shader materials are read from <root>/bundle at compile time.

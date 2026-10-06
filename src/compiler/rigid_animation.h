@@ -6,9 +6,8 @@
 
 namespace dtglb::compiler {
 
-// Experimental: lower animated, unskinned rigid geometry into one synthesized
-// SkinDT.  This is intentionally opt-in until the runtime representation has
-// been verified against a live Darktide client.
+// Lower animated, unskinned rigid geometry into one synthesized SkinDT, so object
+// clips play through the unit's skeletal animation.
 bool lower_rigid_animation(const Scene& source, Scene& lowered, std::string& error);
 
 } // namespace dtglb::compiler

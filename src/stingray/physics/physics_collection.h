@@ -25,6 +25,12 @@ struct CollectionJoint {
     std::array<CollectionMotion, 6> motion{};
     float twist_lower = -0.78539816339f, twist_upper = 0.78539816339f;
     float swing_y = 0.78539816339f, swing_z = 0.78539816339f;
+    float linear_lower = -1.0f, linear_upper = 1.0f;   // x axis travel when motion[0] is Limited
+    // Drive back to the authored pose (stiffness 0 = none) on twist, swing and twist (as retail ragdoll joints) or x.
+    enum class Drive { None, Twist, SwingTwist, X };
+    Drive drive = Drive::None;
+    float drive_stiffness = 0.0f, drive_damping = 0.0f;
+    float break_force = 0.0f, break_torque = 0.0f;     // 0 = never breaks
     bool collision_enabled = false;
 };
 
@@ -49,5 +55,9 @@ bool serialize_physics_collections(const std::vector<CollectionBody>& bodies,
                                    const std::vector<CollectionJoint>& joints,
                                    PhysicsCollections& output,
                                    std::string& error);
+
+// Loads serialized collections through PhysX and lists their D6 joints (motion per axis, limits, drives, break force).
+bool describe_physics_joints(const std::vector<std::uint8_t>& dependencies, const std::vector<std::uint8_t>& objects,
+                             std::string& out, std::string& error);
 
 } // namespace dtglb::stingray::physics

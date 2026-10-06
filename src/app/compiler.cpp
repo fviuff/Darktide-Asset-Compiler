@@ -17,6 +17,7 @@
 #include "processing/scene_scaler.h"
 #include "processing/dangle_canonicalizer.h"
 #include "processing/root_motion.h"
+#include "processing/back_faces.h"
 #include "processing/material_canonicalizer.h"
 #include "processing/attribute_canonicalizer.h"
 #include "processing/topology_canonicalizer.h"
@@ -744,6 +745,12 @@ int compile(const CompileOptions& requested_options) {
     processing::AnimationCanonicalizationReport animation_report;
     if (!processing::canonicalize_animations(scene, animation_report, error)) {
         std::cerr << "compile failed: " << error << "\n";
+        return 2;
+    }
+    std::string back_face_error;
+    processing::add_back_faces(scene, back_face_error);
+    if (!back_face_error.empty()) {
+        std::cerr << "compile failed: " << back_face_error << "\n";
         return 2;
     }
     std::error_code ec;

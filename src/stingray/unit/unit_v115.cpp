@@ -7,6 +7,9 @@
 #include "stingray/cooked_resource.h"
 #include "stingray/murmur_hash.h"
 #include "stingray/physics/physx_cooking.h"
+#include "stingray/flow/flow_authoring.h"
+#include "stingray/flow/flow_resource.h"
+#include "stingray/unit/script_data.h"
 
 #include <algorithm>
 #include <array>
@@ -15,6 +18,7 @@
 #include <cstring>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <numeric>
 #include <set>
 #include <map>
@@ -29,6 +33,8 @@ constexpr std::uint32_t kSimpleStaticRenderFlags = 0x000c2003u;
 constexpr std::uint32_t kMeshObjectKind = 3u;
 constexpr std::uint32_t kMeshObjectEnabled = 1u;
 constexpr std::uint32_t kMaxStaticTexcoordSet = 6u;
+// LOD object word after the flags: Darktide-only, 0 or 1 in the game's units (0 in 65% of them).
+constexpr std::uint32_t kLodObjectX = 0u;
 constexpr std::size_t kMaxSceneNodes = 65535u;
 
 std::uint32_t read_u32(const std::vector<std::uint8_t>& bytes, std::size_t offset) {
@@ -616,6 +622,103 @@ bool collect_active_node_order(const Scene& scene,
     return true;
 }
 
+// The scene node an unskinned mesh renders under, or -1 for the unit root. Like the game's units, a mesh hangs
+// under its own node (or the rigid body that owns it) with its geometry in that node's space, so it follows the node
+// when it moves: animation, Lua, or LINK_MODE_NODE_NAME onto a parent unit's same-named node (weapon parts on the
+// first-person rig). A scene that is just one unparented node keeps its geometry on the root.
+int rigid_render_binding(const Scene& scene, std::size_t primitive_index, const std::vector<std::size_t>& primitive_skins) {
+    const auto& primitive = scene.primitives[primitive_index];
+    if (primitive_skins[primitive_index] != static_cast<std::size_t>(-1)) return -1;
+    if (primitive.render_owner_node >= 0) return primitive.render_owner_node;
+    const bool has_skinned_source = std::any_of(primitive_skins.begin(), primitive_skins.end(),
+        [](std::size_t skin) { return skin != static_cast<std::size_t>(-1); });
+    if (scene.source_features.node_count <= 1 && scene.source_features.parent_edge_count == 0 && !has_skinned_source &&
+        scene.asset_definition.node_bodies.empty()) return -1;
+    if (primitive.source_node < 0 || static_cast<std::size_t>(primitive.source_node) >= scene.nodes.size()) return -1;
+    // a zero-scaled node has no space to store the geometry in (it is collapsed in place anyway)
+    const auto& m = scene.nodes[static_cast<std::size_t>(primitive.source_node)].world_stingray;
+    const double det = static_cast<double>(m[0]) * (static_cast<double>(m[5]) * m[10] - static_cast<double>(m[9]) * m[6]) -
+        static_cast<double>(m[4]) * (static_cast<double>(m[1]) * m[10] - static_cast<double>(m[9]) * m[2]) +
+        static_cast<double>(m[8]) * (static_cast<double>(m[1]) * m[6] - static_cast<double>(m[5]) * m[2]);
+    if (!std::isfinite(det) || det == 0.0) return -1;
+    return primitive.source_node;
+}
+
+// Geometry moved from unit space into the space of a node whose world may rotate, scale or mirror: positions by
+// the inverse world, tangents and binormals by the inverse 3x3, normals by the transposed 3x3, all renormalized;
+// tangent handedness flips with a mirroring node; bounds recomputed.
+bool localize_to_node(const Primitive& source, const Matrix4& world, Primitive& out, std::string& error) {
+    const double a = world[0], b = world[4], c = world[8], d = world[1], e = world[5], f = world[9],
+                 g = world[2], h = world[6], k = world[10];
+    const double det = a * (e * k - f * h) - b * (d * k - f * g) + c * (d * h - e * g);
+    if (!std::isfinite(det) || det == 0.0) {
+        error = "mesh node transform is not invertible (zero scale?)";
+        return false;
+    }
+    // inverse 3x3 in row-major r[row][col]
+    const double r[3][3] = {{(e * k - f * h) / det, (c * h - b * k) / det, (b * f - c * e) / det},
+                            {(f * g - d * k) / det, (a * k - c * g) / det, (c * d - a * f) / det},
+                            {(d * h - e * g) / det, (b * g - a * h) / det, (a * e - b * d) / det}};
+    const double tx = world[12], ty = world[13], tz = world[14];
+    const auto normalize = [](double& x, double& y, double& z) {
+        const double length = std::sqrt(x * x + y * y + z * z);
+        if (length > 0.0) { x /= length; y /= length; z /= length; }
+    };
+    out = source;
+    const VertexChannel* position = nullptr;
+    for (auto& channel : out.channels) {
+        const bool point = channel.semantic == VertexChannel::Semantic::Position;
+        const bool normal = channel.semantic == VertexChannel::Semantic::Normal;
+        const bool direction = channel.semantic == VertexChannel::Semantic::Tangent ||
+            channel.semantic == VertexChannel::Semantic::Binormal;
+        if (!point && !normal && !direction) continue;
+        if (channel.components < 3 || channel.values.size() % channel.components != 0) {
+            error = "mesh vector channel has fewer than 3 components";
+            return false;
+        }
+        for (std::size_t i = 0; i < channel.values.size(); i += channel.components) {
+            double x = channel.values[i], y = channel.values[i + 1], z = channel.values[i + 2];
+            if (point) { x -= tx; y -= ty; z -= tz; }
+            double lx, ly, lz;
+            if (normal) { // transpose of the world 3x3
+                lx = a * x + d * y + g * z; ly = b * x + e * y + h * z; lz = c * x + f * y + k * z;
+            } else {
+                lx = r[0][0] * x + r[0][1] * y + r[0][2] * z;
+                ly = r[1][0] * x + r[1][1] * y + r[1][2] * z;
+                lz = r[2][0] * x + r[2][1] * y + r[2][2] * z;
+            }
+            if (!point) normalize(lx, ly, lz);
+            channel.values[i] = static_cast<float>(lx);
+            channel.values[i + 1] = static_cast<float>(ly);
+            channel.values[i + 2] = static_cast<float>(lz);
+            if (channel.semantic == VertexChannel::Semantic::Tangent && channel.components > 3 && det < 0.0)
+                channel.values[i + 3] = -channel.values[i + 3];
+        }
+        if (point) position = &channel;
+    }
+    if (!position || position->values.empty()) { error = "mesh has no POSITION channel"; return false; }
+    out.bounds_min = {std::numeric_limits<float>::infinity(), std::numeric_limits<float>::infinity(),
+                      std::numeric_limits<float>::infinity()};
+    out.bounds_max = {-out.bounds_min[0], -out.bounds_min[1], -out.bounds_min[2]};
+    for (std::size_t i = 0; i < position->values.size(); i += position->components)
+        for (int axis = 0; axis < 3; ++axis) {
+            out.bounds_min[axis] = std::min(out.bounds_min[axis], position->values[i + axis]);
+            out.bounds_max[axis] = std::max(out.bounds_max[axis], position->values[i + axis]);
+        }
+    const std::array<float, 3> center{(out.bounds_min[0] + out.bounds_max[0]) * 0.5f,
+                                      (out.bounds_min[1] + out.bounds_max[1]) * 0.5f,
+                                      (out.bounds_min[2] + out.bounds_max[2]) * 0.5f};
+    double radius2 = 0;
+    for (std::size_t i = 0; i < position->values.size(); i += position->components) {
+        const double dx = position->values[i] - center[0], dy = position->values[i + 1] - center[1],
+                     dz = position->values[i + 2] - center[2];
+        radius2 = std::max(radius2, dx * dx + dy * dy + dz * dz);
+    }
+    out.bounds_radius = static_cast<float>(std::sqrt(radius2));
+    if (!std::isfinite(out.bounds_radius)) { error = "mesh bounds are non-finite"; return false; }
+    return true;
+}
+
 bool build_scene_graph(const Scene& scene,
                        std::uint32_t root_name_hash,
                        const std::vector<std::uint32_t>& mesh_name_hashes,
@@ -654,12 +757,12 @@ bool build_scene_graph(const Scene& scene,
             const auto& primitive = scene.primitives[i];
             const bool skinned = primitive_skins[i] != static_cast<std::size_t>(-1);
             const bool world_baked_rigid_skin = skinned && primitive_skins[i] < scene.skins.size() &&
-                scene.skins[primitive_skins[i]].name == "__experimental_rigid_animation_skin";
+                scene.skins[primitive_skins[i]].name == "__rigid_animation_skin";
             // Rigid animation lowering stores rest-pose world vertices and uses
             // SkinDT's inverse-bind palette to apply node motion. Parenting its
             // renderer beneath the same source node would apply that motion twice.
             const int binding = world_baked_rigid_skin ? -1 :
-                (skinned ? primitive.source_node : primitive.render_owner_node);
+                (skinned ? primitive.source_node : rigid_render_binding(scene, i, primitive_skins));
             std::uint16_t parent_index = 0;
             if (binding >= 0) {
                 if (static_cast<std::size_t>(binding) >= source_node_refs.size() ||
@@ -917,7 +1020,9 @@ bool write_light_records(const Scene& scene, const std::vector<std::uint32_t>& s
         w.f32(spot ? 2.0f * light.inner_cone_angle : 0.0f); // spot angle start (full cone)
         w.f32(spot ? 2.0f * light.outer_cone_angle : 3.14159274f); // spot angle end (full cone)
         w.f32(0.0f); w.f32(0.0f);                         // box max y/z
-        w.u32(0);                                         // flags: no shadows, enabled
+        // flags (Lua Light.*): 1 casts shadows, 2 disabled, 4 baked, 8 dynamic, 0x40 force static
+        const auto& shadows = scene.asset_definition.shadow_lights;
+        w.u32(std::find(shadows.begin(), shadows.end(), static_cast<int>(node_index)) != shadows.end() ? 1u : 0u);
         w.u32(spot ? 1u : 0u);                            // type: omni / spot
         w.u64(0);                                         // material
         w.u64(0);                                         // IES profile
@@ -965,11 +1070,117 @@ void write_visibility_groups(const Scene& scene, BinaryWriter& w) {
     }
 }
 
+// MeshObject render flags as the game writes them (Stingray: 0x1 viewport visible, 0x2 shadow caster; Darktide
+// adds 0xc0000 with visibility and 0x2000): 0xc2003 visible + shadow, 0xc2001 visible only, 0x2002 shadow only.
+// The nearest render setting on the mesh's node or above it decides.
+std::uint32_t mesh_render_flags_for(const Scene& scene, const Primitive& primitive) {
+    const auto& settings = scene.asset_definition.render_settings;
+    for (int node : {primitive.source_node, primitive.render_owner_node}) {
+        for (int guard = 0; node >= 0 && static_cast<std::size_t>(node) < scene.nodes.size() && guard < 65536; ++guard) {
+            for (const auto& setting : settings)
+                if (setting.source_node == node)
+                    return setting.visible ? (setting.shadow ? 0x000c2003u : 0x000c2001u) : 0x00002002u;
+            node = scene.nodes[static_cast<std::size_t>(node)].parent;
+        }
+    }
+    return kSimpleStaticRenderFlags;
+}
+
+// LOD objects: each group's levels in level order, a level owning the meshes of its node and
+// the nodes below it (the nearest level node wins).
+struct LodObject {
+    std::string group;
+    std::vector<const LodLevel*> levels;
+    std::vector<std::vector<std::uint32_t>> meshes;
+};
+
+bool plan_lod_objects(const Scene& scene, std::vector<LodObject>& objects, std::vector<bool>& in_lod, std::string& error) {
+    const auto& levels = scene.asset_definition.lod_levels;
+    in_lod.assign(scene.primitives.size(), false);
+    if (levels.empty()) return true;
+    const auto level_of = [&](int node) -> const LodLevel* {
+        for (int guard = 0; node >= 0 && static_cast<std::size_t>(node) < scene.nodes.size() && guard < 65536; ++guard) {
+            for (const auto& level : levels) if (level.source_node == node) return &level;
+            node = scene.nodes[static_cast<std::size_t>(node)].parent;
+        }
+        return nullptr;
+    };
+    for (const auto& level : levels) {
+        auto object = std::find_if(objects.begin(), objects.end(), [&](const LodObject& o) { return o.group == level.group; });
+        if (object == objects.end()) object = objects.insert(objects.end(), {level.group, {}, {}});
+        for (const auto* other : object->levels)
+            if (other->level == level.level) { error = "LOD group '" + level.group + "' has level " + std::to_string(level.level) + " twice"; return false; }
+        object->levels.push_back(&level);
+    }
+    for (auto& object : objects) {
+        std::sort(object.levels.begin(), object.levels.end(), [](const LodLevel* a, const LodLevel* b) { return a->level < b->level; });
+        object.meshes.resize(object.levels.size());
+        for (std::size_t k = 1; k < object.levels.size(); ++k)
+            if (!(object.levels[k]->down_to < object.levels[k - 1]->down_to)) {
+                error = "LOD group '" + object.group + "': each level must switch at a smaller screen height than the one before";
+                return false;
+            }
+    }
+    for (std::size_t i = 0; i < scene.primitives.size(); ++i) {
+        const LodLevel* level = level_of(scene.primitives[i].source_node);
+        if (!level) level = level_of(scene.primitives[i].render_owner_node);
+        if (!level) continue;
+        for (auto& object : objects)
+            for (std::size_t k = 0; k < object.levels.size(); ++k)
+                if (object.levels[k] == level) object.meshes[k].push_back(static_cast<std::uint32_t>(i));
+        in_lod[i] = true;
+    }
+    for (const auto& object : objects)
+        for (std::size_t k = 0; k < object.levels.size(); ++k)
+            if (object.meshes[k].empty()) {
+                error = "LOD group '" + object.group + "' level " + std::to_string(object.levels[k]->level) + " has no meshes";
+                return false;
+            }
+    return true;
+}
+
+// UNIT LOD object records (non-streamed, like the game's units without a geometry stream):
+// name, the unit's source file id, orientation node, steps {visible height range, meshes, stream
+// offset 0, stream index 0}, bounding volume, flags, kLodObjectX, empty stream order, 0, not streamed.
+// As in Stingray's compiler the bounding volume is the first mesh's of the top level, the object
+// turns with that mesh's node, and the flags are its meshes' render flags without the LOD bit (0x8)
+// and the streamed bit (0x10000).
+void write_lod_objects(BinaryWriter& w, const std::vector<LodObject>& objects, const std::string& resource_name,
+                       const std::vector<Primitive>& geometry, const std::vector<std::uint32_t>& renderer_node_refs,
+                       const std::vector<std::uint32_t>& render_flags, const std::vector<bool>& skinned) {
+    w.u32(static_cast<std::uint32_t>(objects.size()));
+    for (const auto& object : objects) {
+        const auto bounds_mesh = object.meshes.front().front();
+        w.u32(id32_from_id64(object.group));
+        w.u64(resource_name.empty() ? 0u : resource_name_hash(resource_name + ".unit"));
+        w.u32(renderer_node_refs[bounds_mesh]);
+        w.u32(static_cast<std::uint32_t>(object.levels.size()));
+        std::uint32_t flags = 0;
+        for (std::size_t k = 0; k < object.levels.size(); ++k) {
+            w.f32(k == 0 ? std::numeric_limits<float>::max() : object.levels[k - 1]->down_to);
+            w.f32(object.levels[k]->down_to);
+            w.u32(static_cast<std::uint32_t>(object.meshes[k].size()));
+            for (const auto mesh : object.meshes[k]) { w.u32(mesh); flags |= render_flags[mesh]; }
+            w.u32(0);
+            w.u32(0);
+        }
+        for (float value : bounds10(geometry[bounds_mesh], skinned[bounds_mesh])) w.f32(value);
+        w.u32(flags & ~0x10008u);
+        w.u32(kLodObjectX);
+        w.u32(0);
+        w.u32(0);
+        w.u8(0);
+    }
+}
+
 bool write_static_tail(BinaryWriter& w, const Scene& scene, const WriteOptions& options,
                        const std::vector<std::string>& material_slots,
                        const std::vector<std::vector<std::uint8_t>>& actor_records,
                        const std::vector<std::uint8_t>& physics_scene,
                        const std::vector<std::uint32_t>& source_node_refs,
+                       const std::vector<std::uint8_t>& lod_objects,
+                       const std::vector<std::uint8_t>& flow,
+                       const std::vector<std::uint8_t>& flow_dynamic_data,
                        std::string& error) {
     w.u32(static_cast<std::uint32_t>(actor_records.size()));
     for (const auto& record : actor_records) w.bytes(record.data(), record.size());
@@ -981,7 +1192,9 @@ bool write_static_tail(BinaryWriter& w, const Scene& scene, const WriteOptions& 
     w.u32(light_count);
     w.bytes(lights.data().data(), lights.data().size());
     // u64 list, LOD objects, terrains, unused, joints, movers, unused.
-    for (int i = 0; i < 7; ++i) w.u32(0);
+    w.u32(0);
+    w.bytes(lod_objects.data(), lod_objects.size());
+    for (int i = 0; i < 5; ++i) w.u32(0);
     // Unit resource +0x2b0: the engine only creates the animation blender and
     // instances the state machine named below when this is set (all retail
     // units that reference a state machine set it).
@@ -990,12 +1203,21 @@ bool write_static_tail(BinaryWriter& w, const Scene& scene, const WriteOptions& 
     if (!options.animation_state_machine_resource.empty())
         w.bytes(options.animation_state_machine_resource.data(), options.animation_state_machine_resource.size());
 
-    static constexpr std::array<std::uint8_t, 8> dynamic_data{0xff,0xff,0xff,0xff,0,0,0,0};
+    // script data (Unit.get_data); empty encodes as {0xffffffff, 0} like the game's units without data
+    std::vector<std::uint8_t> dynamic_data;
+    json::Value data = json::Value::object();
+    if (!scene.asset_definition.script_data.empty() && !json::parse(scene.asset_definition.script_data, data, error)) {
+        error = "unit data: " + error;
+        return false;
+    }
+    if (!encode_script_data(data, dynamic_data, error)) return false;
     w.u32(static_cast<std::uint32_t>(dynamic_data.size()));
     w.bytes(dynamic_data.data(), dynamic_data.size());
     write_visibility_groups(scene, w);
-    w.u32(0);
-    w.u32(0);
+    w.u32(static_cast<std::uint32_t>(flow.size()));
+    w.bytes(flow.data(), flow.size());
+    w.u32(static_cast<std::uint32_t>(flow_dynamic_data.size()));
+    w.bytes(flow_dynamic_data.data(), flow_dynamic_data.size());
 
     static constexpr std::array<std::uint8_t, 4> pre_physics{0,0,0,0};
     w.u32(static_cast<std::uint32_t>(pre_physics.size()));
@@ -1187,32 +1409,28 @@ bool build_unit_v115(const Scene& scene, UnitResource& out, std::string& error, 
     }
 
     BinaryWriter body;
-    // MeshObjects bound to a rigid body use body-local vertices and bounds.
+    // Unskinned MeshObjects use the vertices and bounds of the node they render under (rigid_render_binding).
     // Keep the original world-space geometry intact for collider construction.
-    std::vector<Primitive> owned_geometry;
-    if (!scene.asset_definition.node_bodies.empty()) {
-        owned_geometry = scene.primitives;
-        for (std::size_t i = 0; i < scene.primitives.size(); ++i) {
-            const int owner = scene.primitives[i].render_owner_node;
-            if (owner < 0) continue;
-            if (static_cast<std::size_t>(owner) >= scene.nodes.size()) {
-                error = "body-owned render geometry requires a valid rigid source node";
-                return false;
-            }
-            if (primitive_skins[i] != static_cast<std::size_t>(-1)) {
-                const auto skin_index = primitive_skins[i];
-                if (skin_index < scene.skins.size() &&
-                    scene.skins[skin_index].name == "__experimental_rigid_animation_skin") {
-                    // This skin already deforms rest-world vertices through its
-                    // inverse-bind palette. The renderer has no body parent.
-                    continue;
-                }
-                error = "body-owned render geometry requires a rigid source node";
-                return false;
-            }
-            if (!physics::localize_rigid_primitive(scene.primitives[i], scene.nodes[owner].world_stingray,
-                                                   owned_geometry[i], error)) return false;
+    std::vector<Primitive> owned_geometry = scene.primitives;
+    for (std::size_t i = 0; i < scene.primitives.size(); ++i) {
+        const int owner = scene.primitives[i].render_owner_node;
+        if (owner >= 0 && primitive_skins[i] != static_cast<std::size_t>(-1)) {
+            const auto skin_index = primitive_skins[i];
+            // This skin already deforms rest-world vertices through its inverse-bind palette; the renderer has no
+            // body parent.
+            if (skin_index < scene.skins.size() && scene.skins[skin_index].name == "__rigid_animation_skin")
+                continue;
+            error = "body-owned render geometry requires a rigid source node";
+            return false;
         }
+        const int binding = rigid_render_binding(scene, i, primitive_skins);
+        if (binding < 0) continue;
+        if (static_cast<std::size_t>(binding) >= scene.nodes.size()) {
+            error = "render geometry is bound to a missing node";
+            return false;
+        }
+        if (!localize_to_node(scene.primitives[i], scene.nodes[binding].world_stingray, owned_geometry[i], error))
+            return false;
     }
     const auto& render_geometry = owned_geometry.empty() ? scene.primitives : owned_geometry;
     body.u32(kUnitVersion);
@@ -1275,6 +1493,11 @@ bool build_unit_v115(const Scene& scene, UnitResource& out, std::string& error, 
         return false;
 #endif
     }
+    std::vector<LodObject> lods;
+    std::vector<bool> in_lod;
+    if (!plan_lod_objects(scene, lods, in_lod, error)) return false;
+    std::vector<std::uint32_t> mesh_render_flags(scene.primitives.size());
+    std::vector<bool> mesh_skinned(scene.primitives.size());
     body.u32(static_cast<std::uint32_t>(scene.primitives.size()));
     for (std::size_t i = 0; i < scene.primitives.size(); ++i) {
         const bool skinned = primitive_skins[i] != static_cast<std::size_t>(-1);
@@ -1285,15 +1508,73 @@ bool build_unit_v115(const Scene& scene, UnitResource& out, std::string& error, 
             error = "MeshObject has no matching renderer SceneGraph node";
             return false;
         }
-        const auto material_index = scene.primitives[i].material;
-        const bool double_sided = material_index >= 0 &&
-            scene.materials[static_cast<std::size_t>(material_index)].double_sided;
-        const std::uint32_t render_flags = kSimpleStaticRenderFlags | (double_sided ? 0x00000004u : 0u);
+        // 0x8: drawn only while a LOD object selects it
+        const std::uint32_t render_flags = mesh_render_flags_for(scene, scene.primitives[i]) | (in_lod[i] ? 0x00000008u : 0u);
+        mesh_render_flags[i] = render_flags;
+        mesh_skinned[i] = skinned;
         write_simple_mesh_object(body, render_geometry[i], mesh_name_hashes[i],
                                  renderer_node_refs[i], static_cast<std::uint32_t>(i + 1),
                                  render_flags, skin_ref, skinned);
     }
-    if (!write_static_tail(body, scene, options, material_slots, actor_records, physics_scene, source_node_refs, error)) return false;
+    BinaryWriter lod_section;
+    write_lod_objects(lod_section, lods, options.resource_name, render_geometry, renderer_node_refs, mesh_render_flags, mesh_skinned);
+    std::vector<std::uint8_t> flow, flow_dynamic_data;
+    if (!scene.asset_definition.flow.empty()) {
+        json::Value authored, graph;
+        if (!json::parse(scene.asset_definition.flow, authored, error)) { error = "unit flow: " + error; return false; }
+        // an effect named without a path is one of this asset's own particle effects (<asset folder>/<name>)
+        const auto slash = options.resource_name.find_last_of('/');
+        const auto folder = slash == std::string::npos ? std::string() : options.resource_name.substr(0, slash + 1);
+        const auto member = [](json::Value& object, const char* name) -> json::Value* {
+            for (auto& [key, value] : object.members) if (key == name) return &value;
+            return nullptr;
+        };
+        if (auto* nodes = member(authored, "nodes"); nodes && nodes->is_array())
+            for (auto& node : nodes->items) {
+                const auto* type = node.find("type");
+                auto* inputs = type && type->is_string() && type->string == "particle_effect" ? member(node, "inputs") : nullptr;
+                auto* effect = inputs ? member(*inputs, "effect") : nullptr;
+                if (effect && effect->is_string() && effect->string.find('/') == std::string::npos)
+                    effect->string = folder + effect->string;
+                // a mesh named by its object: the object's first mesh (one per material, <object>_p<n>)
+                auto* mesh_inputs = type && type->is_string() && type->string == "get_mesh" ? member(node, "inputs") : nullptr;
+                auto* mesh = mesh_inputs ? member(*mesh_inputs, "name") : nullptr;
+                if (mesh && mesh->is_string() && std::find(mesh_names.begin(), mesh_names.end(), mesh->string) == mesh_names.end())
+                    for (std::size_t i = 0; i < scene.primitives.size(); ++i) {
+                        const int source = scene.primitives[i].source_node;
+                        if (source >= 0 && static_cast<std::size_t>(source) < scene.nodes.size() &&
+                            scene.nodes[static_cast<std::size_t>(source)].name == mesh->string) {
+                            mesh->string = mesh_names[i];
+                            break;
+                        }
+                    }
+                // the engine finds a mesh's material by its resource name: a material slot name becomes the
+                // material resource bound to that slot
+                auto* material_inputs = type && type->is_string() && type->string == "get_material" ? member(node, "inputs") : nullptr;
+                auto* material = material_inputs ? member(*material_inputs, "name") : nullptr;
+                if (material && material->is_string())
+                    for (std::size_t i = 0; i < material_slots.size(); ++i) {
+                        const auto& slot = material_slots[i];
+                        const int source = scene.primitives[i].material;
+                        const bool named = slot == material->string || (source >= 0 &&
+                            static_cast<std::size_t>(source) < scene.materials.size() &&
+                            scene.materials[static_cast<std::size_t>(source)].name == material->string);
+                        if (named) {
+                            const auto& bound = std::find_if(options.material_bindings.begin(), options.material_bindings.end(),
+                                [&](const auto& binding) { return binding.first == slot; });
+                            if (bound != options.material_bindings.end()) material->string = bound->second;
+                            else if (!options.material_override.empty()) material->string = options.material_override;
+                            break;
+                        }
+                    }
+            }
+        if (!flow::build_graph(authored, graph, error) || !flow::encode(graph, flow, flow_dynamic_data, error)) {
+            error = "unit flow: " + error;
+            return false;
+        }
+    }
+    if (!write_static_tail(body, scene, options, material_slots, actor_records, physics_scene, source_node_refs,
+                           lod_section.data(), flow, flow_dynamic_data, error)) return false;
 
     out.body = body.data();
     return true;

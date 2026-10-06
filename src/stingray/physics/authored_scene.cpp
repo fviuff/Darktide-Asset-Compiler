@@ -104,6 +104,11 @@ bool build_authored_physics_scene(const Scene& scene,
             error = "authored joint requires both twist limits or neither";
             return false;
         }
+        if (definition.slide_min.has_value() != definition.slide_max.has_value() ||
+            (definition.slide_min && *definition.slide_min > *definition.slide_max)) {
+            error = "authored slider needs both travel limits in order, or neither";
+            return false;
+        }
         CollectionJoint joint;
         joint.name = definition.id;
         joint.body0 = static_cast<std::uint32_t>(a->second);
@@ -121,14 +126,32 @@ bool build_authored_physics_scene(const Scene& scene,
                 joint.twist_upper = *definition.twist_max;
             }
             break;
+        case JointKind::Slider:
+            joint.motion[0] = definition.slide_min ? CollectionMotion::Limited : CollectionMotion::Free;
+            if (definition.slide_min) {
+                joint.linear_lower = *definition.slide_min;
+                joint.linear_upper = *definition.slide_max;
+            }
+            joint.drive = CollectionJoint::Drive::X;
+            break;
+        case JointKind::Ball:
+            joint.motion[3] = joint.motion[4] = joint.motion[5] = CollectionMotion::Free;
+            joint.drive = CollectionJoint::Drive::SwingTwist;
+            break;
         case JointKind::Ragdoll:
             joint.motion[3] = joint.motion[4] = joint.motion[5] = CollectionMotion::Limited;
             joint.twist_lower = definition.twist_min.value_or(-0.78539816339f);
             joint.twist_upper = definition.twist_max.value_or(0.78539816339f);
             joint.swing_y = definition.swing_y;
             joint.swing_z = definition.swing_z;
+            joint.drive = CollectionJoint::Drive::SwingTwist;
             break;
         }
+        if (definition.kind == JointKind::Hinge) joint.drive = CollectionJoint::Drive::Twist;
+        joint.drive_stiffness = definition.spring_stiffness;
+        joint.drive_damping = definition.spring_damping;
+        joint.break_force = definition.break_force;
+        joint.break_torque = definition.break_torque;
         joints.push_back(joint);
     }
     return serialize_physics_scene(bodies, joints, bytes, error);

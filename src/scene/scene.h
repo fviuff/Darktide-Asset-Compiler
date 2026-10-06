@@ -62,7 +62,7 @@ struct Primitive {
     // for skinning, morphs, animation, collision and future non-baked node emission.
     std::vector<VertexChannel> source_channels;
     std::vector<CustomAttribute> custom_attributes;
-    // World-baked attributes used by the currently verified static MeshGeometry writer.
+    // World-baked attributes used by the static MeshGeometry writer.
     std::vector<VertexChannel> channels;
     std::vector<std::uint32_t> indices;
     std::vector<MorphTarget> morph_targets;
@@ -97,6 +97,8 @@ struct MaterialInfo {
     Intent intent = Intent::Generated;
     std::string external_resource;
     std::string surface_material = "default";
+    // Generated: use the game's weapon shaders (basic_weapon...), which level decals such as snow skip.
+    bool weapon = false;
     std::string donor_family;
     std::string donor_stream_path;
     std::map<std::string, float> donor_variable_overrides;

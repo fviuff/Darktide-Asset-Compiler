@@ -19,6 +19,7 @@ from .reference_skeleton import ReferenceSkeletonError, load_reference, _murmur6
 from . import fit_skeleton
 from . import game_unit
 from . import particle_effect
+from . import flow_editor
 
 
 SCHEMA_KEY = "darktide_asset"
@@ -50,6 +51,52 @@ class DarktideAnimationState(bpy.types.PropertyGroup):
         ("loop", "Loop", "Repeat this clip"),
         ("once", "Play once", "Play this clip without looping"),
     ], default="loop")
+    blend: BoolProperty(name="Blend", default=False,
+                        description="Blend several clips by a float variable (e.g. stand, walk and run by speed)")
+    blend_variable: IntProperty(name="Variable", default=0, min=0,
+                                description="Index of the float variable that picks the mix")
+    blend_clips: StringProperty(name="Clips", default="0:0, 1:1",
+                                description="clip:value pairs. A clip plays fully when the variable equals its value "
+                                            "and fades into the clips next to it, e.g. 0:0, 1:1, 2:3. With 2D on, "
+                                            "clip:x:y, e.g. 0:0:0, 1:1:0, 2:-1:0, 3:0:1")
+    blend_2d: BoolProperty(name="2D", default=False,
+                           description="Blend by two variables at once, e.g. strafing: x sideways, y forward")
+    blend_variable2: IntProperty(name="Variable Y", default=1, min=0,
+                                 description="Index of the float variable for the second direction")
+    random: BoolProperty(name="Random", default=False,
+                         description="Play one of several clips picked at random (idle variations and the like); "
+                                     "Clips lists them as clip:weight, e.g. 0:3, 1:1 plays clip 0 three times as often")
+    random_pick: EnumProperty(name="Pick", items=[
+        ("every_loop", "Every loop", "Pick a clip again each time one finishes"),
+        ("no_repeat", "Every loop, no repeat", "Pick again each time, never the same clip twice in a row"),
+        ("on_entry", "On entry", "Pick once when the state starts and keep it"),
+    ], default="every_loop")
+    speed: FloatProperty(name="Speed", default=1.0, description="Playback speed, 1 = as animated")
+    speed_from_variable: BoolProperty(name="Speed from variable", default=False,
+                                      description="Play at the speed a float variable holds, which your mod sets")
+    speed_variable: IntProperty(name="Speed variable", default=0, min=0,
+                                description="Index of the float variable that sets the playback speed")
+    layer: IntProperty(name="Layer", default=0, min=0,
+                       description="0 is the base layer. Higher layers play on top of it, each starting in its first "
+                                   "state; transitions stay inside a layer and an event reaches every layer")
+    empty: BoolProperty(name="Empty", default=False,
+                        description="Play nothing on this layer, so the layers below show through")
+    additive: BoolProperty(name="Additive", default=False,
+                           description="Add this clip on top of the layers below instead of replacing them")
+    events_at: StringProperty(name="Events at", default="",
+                              description="Send these state machine events when the clip reaches a time in seconds, "
+                                          "as seconds:event, e.g. 0.4:hit, 1.2:fire. Transitions on other states "
+                                          "and layers react to them like to Unit.animation_event")
+    exit_event: StringProperty(name="Exit event", default="",
+                               description="Sent once just before the clip ends, e.g. done, with a transition on "
+                                           "done back to idle for a clip that plays once")
+    exit_blend: FloatProperty(name="Seconds left", default=0.2, min=0.0,
+                              description="How long before the end the exit event goes out (use the transition's "
+                                          "blend time so the next clip is fully in when this one ends)")
+    bones: StringProperty(name="Bones", default="",
+                          description="Only these bones play this state, each with everything below it, e.g. "
+                                      "j_spine1 for the upper body. bone:weight plays it partly, e.g. j_neck:0.5, later "
+                                      "entries win. Empty = the whole body")
 
 
 class DarktideAnimationVariable(bpy.types.PropertyGroup):
@@ -165,6 +212,17 @@ class DarktideSceneSettings(bpy.types.PropertyGroup):
                     "build.log lists each clip's speed for moving the unit from your mod",
         default=False,
     )
+    flow_tree: PointerProperty(
+        name="Flow", type=bpy.types.NodeTree, poll=lambda self, tree: tree.bl_idname == flow_editor.TREE,
+        description="The unit's flow (Darktide Flow node tree in the node editor): what happens when it spawns or "
+                    "when a script calls Unit.flow_event(unit, name)",
+    )
+    weapon_materials: BoolProperty(
+        name="Weapon or gear materials",
+        description="Build the generated materials on the game's weapon shaders, so level decals like snow and dirt "
+                    "don't land on them (the game's weapons and gear work that way)",
+        default=False,
+    )
     ragdoll_event: StringProperty(
         name="Ragdoll event",
         description="Animation event that turns the rig into a ragdoll (Unit.animation_event(unit, name)). "
@@ -252,6 +310,17 @@ class DarktideCollectionSettings(bpy.types.PropertyGroup):
         name="In place",
         description="Remove the forward travel walk/run clips carry in their root bone so they loop on the spot. "
                     "build.log lists each clip's speed for moving the unit from your mod",
+        default=False,
+    )
+    flow_tree: PointerProperty(
+        name="Flow", type=bpy.types.NodeTree, poll=lambda self, tree: tree.bl_idname == flow_editor.TREE,
+        description="The unit's flow (Darktide Flow node tree in the node editor): what happens when it spawns or "
+                    "when a script calls Unit.flow_event(unit, name)",
+    )
+    weapon_materials: BoolProperty(
+        name="Weapon or gear materials",
+        description="Build the generated materials on the game's weapon shaders, so level decals like snow and dirt "
+                    "don't land on them (the game's weapons and gear work that way)",
         default=False,
     )
     ragdoll_event: StringProperty(
@@ -350,6 +419,11 @@ class DarktideMaterialSettings(bpy.types.PropertyGroup):
     shared_blend: FloatProperty(name="shared_blend", default=0.0)
     override_bc_blend: BoolProperty(name="Override bc_blend", default=False)
     bc_blend: FloatProperty(name="bc_blend", default=0.0)
+    double_sided: BoolProperty(
+        name="Double-sided", default=False,
+        description="Show the back faces too (leaves, cloth, cards, flat signs). They are added as extra triangles, "
+                    "so only tick it where it's needed",
+    )
     surface: EnumProperty(name="Surface response", default="default", items=[
         ("default", "Default", "Default material surface context"),
         ("metal_solid", "Solid metal", "Solid metal surface context"),
@@ -385,6 +459,17 @@ class DarktideDangleSettings(bpy.types.PropertyGroup):
                                description="How far the bone may lag behind its animated position")
 
 
+class DarktideAimSettings(bpy.types.PropertyGroup):
+    enabled: BoolProperty(name="Aim", default=False,
+                          description="Turn bones so this bone points at a target your mod moves "
+                                      "(Unit.animation_set_constraint_target), like a turret or a head following you")
+    target: StringProperty(name="Target", default="aim_target",
+                           description="Target name; your mod finds it with Unit.animation_find_constraint_target")
+    turn: StringProperty(name="Turn", default="",
+                         description="Bones that turn toward the target, as bone:weight, e.g. j_spine2:0.2, j_neck:1 "
+                                     "for an aim on j_head. Empty turns this bone's parent fully")
+
+
 class DarktideColliderSettings(bpy.types.PropertyGroup):
     stable_id: StringProperty(name="Stable ID")
     is_body: BoolProperty(name="Body", default=False)
@@ -393,7 +478,10 @@ class DarktideColliderSettings(bpy.types.PropertyGroup):
     material: _enum(("default", "iron", "rubber"), "default")
     body: PointerProperty(name="Body", type=bpy.types.Object)
     joint_kind: EnumProperty(name="Joint", default="none", items=[
-        ("none", "None", ""), ("fixed", "Fixed", ""), ("hinge", "Hinge", ""), ("ragdoll", "Ragdoll", ""),
+        ("none", "None", ""), ("fixed", "Fixed", ""), ("hinge", "Hinge", "Turns around the empty's x axis"),
+        ("ragdoll", "Ragdoll", "Swings and twists within limits, like a body joint"),
+        ("slider", "Slider", "Slides along the empty's x axis, like a drawer"),
+        ("ball", "Ball", "Turns freely in every direction"),
     ])
     body_a: PointerProperty(name="Body A", type=bpy.types.Object)
     body_b: PointerProperty(name="Body B", type=bpy.types.Object)
@@ -402,6 +490,18 @@ class DarktideColliderSettings(bpy.types.PropertyGroup):
     twist_max: FloatProperty(name="Twist maximum", default=3.14159265, subtype="ANGLE")
     swing_y: FloatProperty(name="Swing Y", default=0.78539816, subtype="ANGLE", min=0.0)
     swing_z: FloatProperty(name="Swing Z", default=0.78539816, subtype="ANGLE", min=0.0)
+    slide_limits: BoolProperty(name="Limit travel", default=False)
+    slide_min: FloatProperty(name="Travel minimum", default=-0.5, subtype="DISTANCE")
+    slide_max: FloatProperty(name="Travel maximum", default=0.5, subtype="DISTANCE")
+    spring_stiffness: FloatProperty(name="Spring", default=0.0, min=0.0,
+                                    description="Pulls the joint back to how it sits in blender (0 = no spring), "
+                                                "e.g. a door that swings shut by itself")
+    spring_damping: FloatProperty(name="Spring damping", default=0.0, min=0.0,
+                                  description="Slows the spring down so it settles instead of bouncing")
+    break_force: FloatProperty(name="Break force", default=0.0, min=0.0,
+                               description="The joint snaps above this force in newtons (0 = never)")
+    break_torque: FloatProperty(name="Break torque", default=0.0, min=0.0,
+                                description="The joint snaps above this twisting force (0 = never)")
     shape: EnumProperty(name="Collision geometry", default="geometry", items=[
         ("geometry", "Mesh surface", "Use this mesh's triangle surface for static/keyframed bodies"),
         ("convex", "Convex mesh", "Use a convex hull of this authored mesh for a simulated body"),
@@ -416,6 +516,29 @@ class DarktideColliderSettings(bpy.types.PropertyGroup):
         name="Visibility group",
         description="Name of a group this object's meshes (and all meshes below it) belong to; "
                     "toggle in game with Unit.set_visibility(unit, name, visible)",
+    )
+    render_visible: BoolProperty(
+        name="Visible", default=True,
+        description="Draw this object's meshes (and all meshes below it). Off with Casts shadow on makes a "
+                    "shadow-only stand-in, like the game's simplified shadow meshes",
+    )
+    render_shadow: BoolProperty(
+        name="Casts shadow", default=True,
+        description="This object's meshes (and all meshes below it) cast shadows",
+    )
+    lod_group: StringProperty(
+        name="LOD group",
+        description="Makes this object (its meshes and all meshes below it) one detail level of a LOD object "
+                    "with this name. The game's units use \"lod\"; weapons and gear need it named that way",
+    )
+    lod_level: IntProperty(
+        name="Level", min=0, default=0,
+        description="0 = full detail, 1 = the next simpler version, and so on",
+    )
+    lod_down_to: FloatProperty(
+        name="Visible down to", min=0.0, default=0.0, precision=3,
+        description="Screen height share (1 = the object fills the screen height) below which the next level "
+                    "takes over. 0 on the last level keeps it visible at any distance",
     )
 
 
@@ -491,7 +614,7 @@ _COLLECTION_OPTIONS = ("actor", "mass", "material", "visible_meshes_collide",
                        "asset_filename", "scale", "output_kind", "select_clip", "clip_index",
                        "embed_simple_animation", "simple_animation_clip", "auto_loop_single_clip",
                        "create_looping_state_machine", "loop_clip_index", "state_machine_playback",
-                       "create_state_graph", "ragdoll_event", "in_place",
+                       "create_state_graph", "ragdoll_event", "in_place", "weapon_materials", "flow_tree",
                        "animation_translation_tolerance", "animation_scale_tolerance",
                        "animation_rotation_tolerance_radians", "animation_fit_advanced",
                        "only_weighted_bones")
@@ -499,7 +622,10 @@ _COLLECTION_OPTIONS = ("actor", "mass", "material", "visible_meshes_collide",
 
 def _copy_state_graph(source, target):
     rows = (
-        ("state_graph_states", ("state_name", "clip_index", "playback")),
+        ("state_graph_states", ("state_name", "clip_index", "playback", "blend", "blend_variable", "blend_clips",
+                                "speed", "speed_from_variable", "speed_variable", "random", "random_pick",
+                                "layer", "empty", "additive", "bones", "blend_2d", "blend_variable2",
+                                "events_at", "exit_event", "exit_blend")),
         ("state_graph_variables", ("variable_name", "initial_value", "minimum", "maximum")),
         ("state_graph_transitions", ("from_state", "to_state", "event_name", "blend_seconds",
                                      "condition", "variable_index", "lower", "upper",
@@ -563,6 +689,14 @@ def _validate_state_graph(options):
         raise ValueError("Every state needs a name")
     if len(set(names)) != len(names):
         raise ValueError("State names must be unique")
+    layers = sorted({state.layer for state in states})
+    if layers != list(range(len(layers))):
+        raise ValueError("Layers have to count up from 0 without gaps (layer " + str(len(layers)) + " is missing)")
+    for transition in options.state_graph_transitions:
+        if (transition.from_state < len(states) and transition.to_state < len(states) and
+                states[transition.from_state].layer != states[transition.to_state].layer):
+            raise ValueError("Transition from state " + str(transition.from_state) + " to state " +
+                             str(transition.to_state) + " crosses layers; transitions stay inside a layer")
     clip_count = re.search(r"Clips \((\d+)\)", options.inspection_summary)
     if clip_count:
         count = int(clip_count.group(1))
@@ -616,7 +750,9 @@ def _collider_objects(objects, include_visible=False):
 
 def _authored_objects(objects, include_visible=False):
     return [o for o in objects if o.dt_collider.is_body or o.dt_collider.joint_kind != "none" or
-            o.dt_collider.visibility_group.strip() or (o.type == "EMPTY" and o.dt_particles.enabled) or
+            o.dt_collider.visibility_group.strip() or o.dt_collider.lod_group.strip() or
+            not o.dt_collider.render_visible or not o.dt_collider.render_shadow or
+            (o.type == "EMPTY" and o.dt_particles.enabled) or (o.type == "LIGHT" and o.data.use_shadow) or
             (o.type == "MESH" and _collider_role(o, include_visible) != "render")]
 
 
@@ -683,6 +819,8 @@ def _validate_v2(objects, include_visible=False):
                 raise ValueError("A joint needs at least one dynamic body")
             if settings.hinge_limits and settings.twist_min > settings.twist_max:
                 raise ValueError("Twist minimum must not exceed maximum")
+            if settings.joint_kind == "slider" and settings.slide_limits and settings.slide_min > settings.slide_max:
+                raise ValueError("Travel minimum must not exceed maximum")
 
 
 def _v2_object_extras(obj, include_visible=False):
@@ -702,10 +840,32 @@ def _v2_object_extras(obj, include_visible=False):
             joint.update({"swing_y": settings.swing_y, "swing_z": settings.swing_z})
             if settings.hinge_limits:
                 joint.update({"twist_min": settings.twist_min, "twist_max": settings.twist_max})
+        if settings.joint_kind == "slider" and settings.slide_limits:
+            joint.update({"slide_min": settings.slide_min, "slide_max": settings.slide_max})
+        if settings.joint_kind != "fixed" and (settings.spring_stiffness > 0.0 or settings.spring_damping > 0.0):
+            joint.update({"spring_stiffness": settings.spring_stiffness, "spring_damping": settings.spring_damping})
+        if settings.break_force > 0.0:
+            joint["break_force"] = settings.break_force
+        if settings.break_torque > 0.0:
+            joint["break_torque"] = settings.break_torque
         result["joint"] = joint
     if settings.visibility_group.strip():
         result["visibility_group"] = settings.visibility_group.strip()
+    if settings.lod_group.strip():
+        result["lod"] = _lod_extras(settings)
+    if not settings.render_visible or not settings.render_shadow:
+        result["render"] = _render_extras(settings)
+    if obj.type == "LIGHT" and obj.data.use_shadow:
+        result["light"] = {"shadow": True}
     return result
+
+
+def _render_extras(settings):
+    return {"visible": settings.render_visible, "shadow": settings.render_shadow}
+
+
+def _lod_extras(settings):
+    return {"group": settings.lod_group.strip(), "level": settings.lod_level, "down_to": settings.lod_down_to}
 
 
 def _object_extras(obj, include_visible=False):
@@ -956,6 +1116,7 @@ def export_asset(context, path, donor_path_converter=None):
     original_scene_extra = _copy_idproperty(scene[SCHEMA_KEY]) if had_scene_extra else None
     changed_objects = []
     changed_materials = []
+    backface_culling = []
     changed_bones = []
     changed_bone_extras = []
     original_selection = [obj for obj in view_objects if obj.select_get()]
@@ -992,36 +1153,60 @@ def export_asset(context, path, donor_path_converter=None):
             group = obj.dt_collider.visibility_group.strip()
             if group and not version2:
                 obj[SCHEMA_KEY]["visibility_group"] = group
+            if obj.dt_collider.lod_group.strip() and not version2:
+                obj[SCHEMA_KEY]["lod"] = _lod_extras(obj.dt_collider)
+            if (not obj.dt_collider.render_visible or not obj.dt_collider.render_shadow) and not version2:
+                obj[SCHEMA_KEY]["render"] = _render_extras(obj.dt_collider)
+            if obj.type == "LIGHT" and obj.data.use_shadow and not version2:
+                obj[SCHEMA_KEY]["light"] = {"shadow": True}
             if obj.type == "EMPTY" and obj.dt_particles.enabled:
                 extract = os.path.abspath(bpy.path.abspath(scene.dt_asset.game_extract_folder.strip()))
                 if not scene.dt_asset.game_extract_folder.strip() or not os.path.isdir(extract):
                     raise ValueError("Particle effects need 'Game extract folder' set to your limn extract")
                 obj[SCHEMA_KEY]["particles"] = particle_effect.node_extras(
                     obj, extract, donor_path_converter or (lambda value: value))
+        data = _collection_data(scene.dt_asset.asset_collection)
+        flow_tree = _asset_options(scene).flow_tree
+        if (flow_tree is not None or data) and objects:
+            holder = objects[0]
+            if SCHEMA_KEY not in holder:
+                if not holder.dt_collider.stable_id.strip():
+                    holder.dt_collider.stable_id = _new_id()
+                holder[SCHEMA_KEY] = {"version": 1, "id": holder.dt_collider.stable_id}
+            if flow_tree is not None:
+                holder[SCHEMA_KEY]["flow"] = json.dumps(flow_editor.description(flow_tree))
+            if data:
+                holder[SCHEMA_KEY]["data"] = json.dumps(data)
         for obj in objects:
             if obj.type != "ARMATURE":
                 continue
             for bone in obj.data.bones:
-                if not bone.dt_dangle.enabled:
+                if not bone.dt_dangle.enabled and not bone.dt_aim.enabled:
                     continue
                 had_original = SCHEMA_KEY in bone
                 original = _copy_idproperty(bone[SCHEMA_KEY]) if had_original else None
                 changed_bone_extras.append((bone, original, had_original))
+                extras = {"version": 1, "id": "dangle:" + obj.name + ":" + bone.name}
                 dangle = bone.dt_dangle
-                if dangle.mode == "jiggle":
-                    record = {"mode": "jiggle", "mass": dangle.mass, "gravity": dangle.gravity,
-                              "stiffness": dangle.jiggle_stiffness, "damping": dangle.jiggle_damping,
-                              "max_stretch": dangle.max_stretch}
-                else:
-                    record = {"mass": dangle.mass, "gravity": dangle.gravity, "damping": dangle.damping,
-                              "stiffness": dangle.stiffness, "max_angle": dangle.max_angle,
-                              "length": dangle.length if dangle.length > 0.0 else bone.length}
-                bone[SCHEMA_KEY] = {"version": 1, "id": "dangle:" + obj.name + ":" + bone.name, "dangle": record}
+                if dangle.enabled and dangle.mode == "jiggle":
+                    extras["dangle"] = {"mode": "jiggle", "mass": dangle.mass, "gravity": dangle.gravity,
+                                        "stiffness": dangle.jiggle_stiffness, "damping": dangle.jiggle_damping,
+                                        "max_stretch": dangle.max_stretch}
+                elif dangle.enabled:
+                    extras["dangle"] = {"mass": dangle.mass, "gravity": dangle.gravity, "damping": dangle.damping,
+                                        "stiffness": dangle.stiffness, "max_angle": dangle.max_angle,
+                                        "length": dangle.length if dangle.length > 0.0 else bone.length}
+                if bone.dt_aim.enabled:
+                    extras["aim"] = {"target": bone.dt_aim.target.strip(), "turn": _aim_turn(bone)}
+                bone[SCHEMA_KEY] = extras
         for material in materials:
             had_original = MATERIAL_SCHEMA_KEY in material
             original = _copy_idproperty(material[MATERIAL_SCHEMA_KEY]) if had_original else None
             changed_materials.append((material, original, had_original))
             material.pop(MATERIAL_SCHEMA_KEY, None)
+            # the glTF exporter writes doubleSided from Backface Culling, which Blender leaves off by default
+            backface_culling.append((material, material.use_backface_culling))
+            material.use_backface_culling = not material.dt_material.double_sided
             if material.dt_material.mode == "external":
                 material[MATERIAL_SCHEMA_KEY] = {
                     "version": 1,
@@ -1068,6 +1253,8 @@ def export_asset(context, path, donor_path_converter=None):
                 intent = {"version": 1, "mode": "generated"}
                 if material.dt_material.surface != "default":
                     intent["surface"] = material.dt_material.surface
+                if _asset_options(scene).weapon_materials:
+                    intent["weapon"] = True
                 material[MATERIAL_SCHEMA_KEY] = intent
         kwargs = {"filepath": os.fspath(path), "export_format": "GLB"}
         operator = bpy.ops.export_scene.gltf
@@ -1108,6 +1295,8 @@ def export_asset(context, path, donor_path_converter=None):
                 bone.pop(SCHEMA_KEY, None)
             else:
                 bone[SCHEMA_KEY] = original
+        for material, culling in backface_culling:
+            material.use_backface_culling = culling
         for material, original, had_original in changed_materials:
             if not had_original:
                 material.pop(MATERIAL_SCHEMA_KEY, None)
@@ -1254,7 +1443,33 @@ class DARKTIDE_OT_build(bpy.types.Operator):
                 command.append("--in-place")
             if options.create_state_graph:
                 for state in options.state_graph_states:
-                    command.extend(["--sm-state", state.state_name.strip(), str(state.clip_index), state.playback])
+                    clips = ",".join(part.strip().replace(" ", "") for part in state.blend_clips.split(",") if part.strip())
+                    if state.empty:
+                        command.extend(["--sm-empty", state.state_name.strip(), str(state.layer)])
+                    elif state.random:
+                        command.extend(["--sm-random", state.state_name.strip(), state.random_pick, state.playback, clips])
+                    elif state.blend:
+                        variables = str(state.blend_variable) + ("," + str(state.blend_variable2) if state.blend_2d else "")
+                        command.extend(["--sm-blend", state.state_name.strip(), variables, state.playback, clips])
+                    else:
+                        command.extend(["--sm-state", state.state_name.strip(), str(state.clip_index), state.playback])
+                    if state.speed_from_variable:
+                        command.extend(["--sm-speed", state.state_name.strip(), "var:" + str(state.speed_variable)])
+                    elif state.speed != 1.0:
+                        command.extend(["--sm-speed", state.state_name.strip(), repr(float(state.speed))])
+                    if state.layer and not state.empty:
+                        command.extend(["--sm-layer", state.state_name.strip(), str(state.layer)])
+                    bones = ",".join(part.strip().replace(" ", "") for part in state.bones.split(",") if part.strip())
+                    if bones:
+                        command.extend(["--sm-mask", state.state_name.strip(), bones])
+                    if state.additive and not state.empty:
+                        command.extend(["--sm-additive", state.state_name.strip()])
+                    timed = ",".join(part.strip().replace(" ", "") for part in state.events_at.split(",") if part.strip())
+                    if timed and not state.empty:
+                        command.extend(["--sm-events", state.state_name.strip(), timed])
+                    if state.exit_event.strip() and not state.empty:
+                        command.extend(["--sm-exit", state.state_name.strip(), state.exit_event.strip(),
+                                        repr(float(state.exit_blend))])
                 for variable in options.state_graph_variables:
                     command.extend(["--sm-variable", variable.variable_name.strip(),
                                     str(variable.initial_value), str(variable.minimum), str(variable.maximum)])
@@ -1699,6 +1914,56 @@ class DARKTIDE_OT_export_intermediate(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def _aim_turn(bone):
+    """The bones an aiming bone turns, as {name: weight}; empty means its parent at full weight."""
+    turn = {}
+    for part in bone.dt_aim.turn.split(","):
+        name, _, weight = part.strip().partition(":")
+        if not name.strip():
+            continue
+        if name.strip() not in bone.id_data.bones:
+            raise ValueError("Aim on bone '" + bone.name + "' turns '" + name.strip() + "', which is not a bone of this armature")
+        try:
+            value = float(weight) if weight.strip() else 1.0
+        except ValueError:
+            raise ValueError("Aim on bone '" + bone.name + "': '" + part.strip() + "' is not bone or bone:weight") from None
+        if not 0.0 <= value <= 1.0:
+            raise ValueError("Aim on bone '" + bone.name + "': weights go from 0 to 1")
+        if name.strip() == bone.name:
+            raise ValueError("Aim on bone '" + bone.name + "' can't turn itself, it's the end that points")
+        turn[name.strip()] = value
+    if not turn:
+        if bone.parent is None:
+            raise ValueError("Aim on bone '" + bone.name + "' needs bones to turn (it has no parent)")
+        turn[bone.parent.name] = 1.0
+    if not bone.dt_aim.target.strip():
+        raise ValueError("Aim on bone '" + bone.name + "' needs a target name")
+    return turn
+
+
+class DARKTIDE_PT_bone_aim(bpy.types.Panel):
+    bl_label = "Darktide Aim"
+    bl_idname = "DARKTIDE_PT_bone_aim"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "bone"
+
+    @classmethod
+    def poll(cls, context):
+        return context.bone is not None
+
+    def draw_header(self, context):
+        self.layout.prop(context.bone.dt_aim, "enabled", text="")
+
+    def draw(self, context):
+        aim = context.bone.dt_aim
+        column = self.layout.column()
+        column.active = aim.enabled
+        column.prop(aim, "target")
+        column.prop(aim, "turn")
+        column.label(text="Put this bone where the pointing ends (eye, muzzle)")
+
+
 class DARKTIDE_PT_bone_dangle(bpy.types.Panel):
     bl_label = "Darktide Dangle"
     bl_idname = "DARKTIDE_PT_bone_dangle"
@@ -1779,6 +2044,10 @@ class DARKTIDE_PT_asset_panel(bpy.types.Panel):
         in_place_row = output.row()
         in_place_row.enabled = options.output_kind != "model"
         in_place_row.prop(options, "in_place")
+        output.prop(options, "weapon_materials")
+        flow_row = output.row(align=True)
+        flow_row.prop(options, "flow_tree")
+        flow_row.operator(DARKTIDE_OT_new_flow.bl_idname, text="", icon="ADD")
         loop_row = output.row()
         loop_row.enabled = options.output_kind == "all"
         loop_row.prop(options, "auto_loop_single_clip")
@@ -1799,7 +2068,7 @@ class DARKTIDE_PT_asset_panel(bpy.types.Panel):
         elif options.auto_loop_single_clip and not options.create_state_graph:
             output.label(text="A looping controller is added only when the exported GLB has one clip")
         elif options.create_state_graph:
-            output.label(text="State 0 is the initial state")
+            output.label(text="State 0 is the initial state (higher layers start in their first state)")
             states = options.state_graph_states
             for index, state in enumerate(states):
                 state_box = output.box()
@@ -1809,8 +2078,41 @@ class DARKTIDE_PT_asset_panel(bpy.types.Panel):
                 remove = row.operator(DARKTIDE_OT_remove_animation_state.bl_idname, text="", icon="X")
                 remove.index = index
                 row = state_box.row(align=True)
-                row.prop(state, "clip_index", text="Clip")
-                row.prop(state, "playback", text="")
+                row.prop(state, "layer")
+                row.prop(state, "empty")
+                if not state.empty:
+                    row.prop(state, "additive")
+                    state_box.prop(state, "bones")
+                    row = state_box.row(align=True)
+                    row.prop(state, "blend")
+                    row.prop(state, "random")
+                if state.empty:
+                    pass
+                elif state.random:
+                    row = state_box.row(align=True)
+                    row.prop(state, "random_pick", text="")
+                    row.prop(state, "playback", text="")
+                    state_box.prop(state, "blend_clips")
+                elif state.blend:
+                    row.prop(state, "blend_2d")
+                    row = state_box.row(align=True)
+                    row.prop(state, "blend_variable", text="Variable X" if state.blend_2d else "Variable")
+                    if state.blend_2d:
+                        row.prop(state, "blend_variable2")
+                    row.prop(state, "playback", text="")
+                    state_box.prop(state, "blend_clips")
+                else:
+                    row.prop(state, "clip_index", text="Clip")
+                    row.prop(state, "playback", text="")
+                if not state.empty:
+                    row = state_box.row(align=True)
+                    row.prop(state, "speed_from_variable", text="Speed from variable")
+                    row.prop(state, "speed_variable" if state.speed_from_variable else "speed")
+                    state_box.prop(state, "events_at")
+                    row = state_box.row(align=True)
+                    row.prop(state, "exit_event")
+                    if state.exit_event.strip():
+                        row.prop(state, "exit_blend")
             output.operator(DARKTIDE_OT_add_animation_state.bl_idname, icon="ADD")
             output.label(text="Float variables", icon="DRIVER")
             for index, variable in enumerate(options.state_graph_variables):
@@ -1911,6 +2213,8 @@ class DARKTIDE_PT_asset_panel(bpy.types.Panel):
             material_box = layout.box()
             material_box.label(text="Active material: " + material.name)
             material_box.prop(material.dt_material, "mode")
+            if material.dt_material.mode not in ("external", "template"):
+                material_box.prop(material.dt_material, "double_sided")
             if material.dt_material.mode == "external":
                 material_box.prop(material.dt_material, "resource")
             elif material.dt_material.mode == "game_shader":
@@ -1942,6 +2246,14 @@ class DARKTIDE_PT_asset_panel(bpy.types.Panel):
             collider = layout.box()
             collider.label(text="Active object: " + context.object.name)
             collider.prop(context.object.dt_collider, "visibility_group")
+            row = collider.row(align=True)
+            row.prop(context.object.dt_collider, "render_visible")
+            row.prop(context.object.dt_collider, "render_shadow")
+            collider.prop(context.object.dt_collider, "lod_group")
+            if context.object.dt_collider.lod_group.strip():
+                row = collider.row(align=True)
+                row.prop(context.object.dt_collider, "lod_level")
+                row.prop(context.object.dt_collider, "lod_down_to")
             if context.object.type == "EMPTY":
                 particle_effect.draw(collider, context.object)
             collider.prop(context.object.dt_collider, "is_body")
@@ -1973,20 +2285,72 @@ class DARKTIDE_PT_asset_panel(bpy.types.Panel):
                             box.prop(joint, "twist_min"); box.prop(joint, "twist_max")
                     if joint.joint_kind == "ragdoll":
                         box.prop(joint, "swing_y"); box.prop(joint, "swing_z")
+                    if joint.joint_kind == "slider":
+                        box.prop(joint, "slide_limits")
+                        if joint.slide_limits:
+                            box.prop(joint, "slide_min"); box.prop(joint, "slide_max")
+                    if joint.joint_kind != "fixed":
+                        row = box.row(align=True)
+                        row.prop(joint, "spring_stiffness"); row.prop(joint, "spring_damping")
+                    row = box.row(align=True)
+                    row.prop(joint, "break_force"); row.prop(joint, "break_torque")
+
+
+def _collection_data(collection):
+    """The asset collection's custom properties as the unit's script data (Unit.get_data): text, numbers,
+    true/false, groups (nested tables) and lists."""
+    if collection is None:
+        return {}
+
+    def plain(value):
+        if hasattr(value, "to_dict"):
+            return {key: plain(item) for key, item in value.to_dict().items()}
+        if hasattr(value, "to_list"):
+            return [plain(item) for item in value.to_list()]
+        if isinstance(value, dict):
+            return {key: plain(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [plain(item) for item in value]
+        if isinstance(value, (bool, str)):
+            return value
+        if isinstance(value, (int, float)):
+            return float(value)
+        raise ValueError("Unit data can hold text, numbers, true/false, groups and lists, not " + type(value).__name__)
+
+    registered = set(collection.bl_rna.properties.keys())
+    return {key: plain(value) for key, value in collection.items()
+            if key not in registered and not key.startswith("_") and key != SCHEMA_KEY}
+
+
+class DARKTIDE_OT_new_flow(bpy.types.Operator):
+    """Make a new flow for this asset; edit it in the node editor (Darktide Flow)"""
+    bl_idname = "darktide.new_flow"
+    bl_label = "New Flow"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        options = _asset_options(context.scene)
+        tree = bpy.data.node_groups.new("Unit flow", flow_editor.TREE)
+        spawned = tree.nodes.new("DarktideFlowNode_unit_spawned")
+        spawned.location = (-300, 0)
+        options.flow_tree = tree
+        self.report({"INFO"}, "Open a node editor and switch it to Darktide Flow to edit " + tree.name)
+        return {"FINISHED"}
 
 
 CLASSES = (*fit_skeleton.CLASSES, *particle_effect.CLASSES, DarktideAnimationState, DarktideAnimationVariable, DarktideAnimationTransition,
-           DarktideSceneSettings, DarktideCollectionSettings, DarktideMaterialSettings, DarktideDangleSettings, DarktideColliderSettings,
+           DarktideSceneSettings, DarktideCollectionSettings, DarktideMaterialSettings, DarktideDangleSettings, DarktideAimSettings, DarktideColliderSettings,
            DARKTIDE_OT_create_asset_collection, DARKTIDE_OT_update_asset_collection,
            DARKTIDE_OT_add_animation_state, DARKTIDE_OT_remove_animation_state,
            DARKTIDE_OT_add_animation_variable, DARKTIDE_OT_remove_animation_variable,
            DARKTIDE_OT_add_animation_transition, DARKTIDE_OT_remove_animation_transition,
-           DARKTIDE_OT_make_collision_proxy, DARKTIDE_OT_export_intermediate,
+           DARKTIDE_OT_make_collision_proxy, DARKTIDE_OT_export_intermediate, DARKTIDE_OT_new_flow,
            DARKTIDE_OT_inspect, DARKTIDE_OT_build, DARKTIDE_OT_import_reference_skeleton, DARKTIDE_OT_import_game_unit,
-           *fit_skeleton.UI_CLASSES, DARKTIDE_PT_asset_panel, DARKTIDE_PT_bone_dangle)
+           *fit_skeleton.UI_CLASSES, DARKTIDE_PT_asset_panel, DARKTIDE_PT_bone_dangle, DARKTIDE_PT_bone_aim)
 
 
 def register():
+    flow_editor.register()
     for cls in CLASSES:
         bpy.utils.register_class(cls)
     bpy.types.Scene.dt_asset = PointerProperty(type=DarktideSceneSettings)
@@ -1994,11 +2358,13 @@ def register():
     bpy.types.Collection.dt_asset_identity = PointerProperty(type=DarktideCollectionSettings)
     bpy.types.Material.dt_material = PointerProperty(type=DarktideMaterialSettings)
     bpy.types.Bone.dt_dangle = PointerProperty(type=DarktideDangleSettings)
+    bpy.types.Bone.dt_aim = PointerProperty(type=DarktideAimSettings)
     bpy.types.Object.dt_particles = PointerProperty(type=particle_effect.DarktideParticleSettings)
 
 
 def unregister():
     del bpy.types.Bone.dt_dangle
+    del bpy.types.Bone.dt_aim
     del bpy.types.Object.dt_particles
     del bpy.types.Object.dt_collider
     del bpy.types.Collection.dt_asset_identity
@@ -2006,6 +2372,7 @@ def unregister():
     del bpy.types.Scene.dt_asset
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)
+    flow_editor.unregister()
 
 
 if __name__ == "__main__":

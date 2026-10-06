@@ -348,12 +348,23 @@ private:
 #endif
 
 std::vector<std::vector<std::uint8_t>> tile_surface(std::uint32_t width,std::uint32_t height,const std::vector<std::uint8_t>& payload,std::uint32_t block,std::string& error){
-    const std::uint32_t bw=width/4,bh=height/4,cbw=block==8?128u:64u,cbh=64;if(!surface_is_tileable(width,height,block)){error="external texture mip does not divide into the verified 64 KiB chunk grid";return{};}const std::size_t row=static_cast<std::size_t>(bw)*block,crow=static_cast<std::size_t>(cbw)*block;std::vector<std::vector<std::uint8_t>> chunks;for(std::uint32_t by=0;by<bh;by+=cbh)for(std::uint32_t bx=0;bx<bw;bx+=cbw){std::vector<std::uint8_t> c;c.reserve(65536);const auto x=static_cast<std::size_t>(bx)*block;for(std::uint32_t r=0;r<cbh;++r){const auto s=static_cast<std::size_t>(by+r)*row+x;c.insert(c.end(),payload.begin()+static_cast<std::ptrdiff_t>(s),payload.begin()+static_cast<std::ptrdiff_t>(s+crow));}if(c.size()!=65536){error="external texture chunk is not 64 KiB";return{};}chunks.push_back(std::move(c));}return chunks;
+    const std::uint32_t bw=width/4,bh=height/4,cbw=block==8?128u:64u,cbh=64;if(!surface_is_tileable(width,height,block)){error="external texture mip does not divide into 64 KiB chunks";return{};}const std::size_t row=static_cast<std::size_t>(bw)*block,crow=static_cast<std::size_t>(cbw)*block;std::vector<std::vector<std::uint8_t>> chunks;for(std::uint32_t by=0;by<bh;by+=cbh)for(std::uint32_t bx=0;bx<bw;bx+=cbw){std::vector<std::uint8_t> c;c.reserve(65536);const auto x=static_cast<std::size_t>(bx)*block;for(std::uint32_t r=0;r<cbh;++r){const auto s=static_cast<std::size_t>(by+r)*row+x;c.insert(c.end(),payload.begin()+static_cast<std::ptrdiff_t>(s),payload.begin()+static_cast<std::ptrdiff_t>(s+crow));}if(c.size()!=65536){error="external texture chunk is not 64 KiB";return{};}chunks.push_back(std::move(c));}return chunks;
 }
 
 bool write_file(const std::filesystem::path&p,const std::vector<std::uint8_t>&b,std::string&error){std::error_code ec;std::filesystem::create_directories(p.parent_path(),ec);std::ofstream f(p,std::ios::binary);if(!f){error="cannot open texture output: "+p.string();return false;}f.write(reinterpret_cast<const char*>(b.data()),static_cast<std::streamsize>(b.size()));if(!f){error="failed writing texture output: "+p.string();return false;}return true;}
 
 } // namespace
+
+bool oodle_compress(const std::vector<std::uint8_t>& input, std::vector<std::uint8_t>& packed, std::string& error) {
+#ifdef _WIN32
+    DarktideOodle oodle;
+    return oodle.load(error) && oodle.compress_roundtrip(input, packed, "shader", error);
+#else
+    (void)input; (void)packed;
+    error = "Oodle compression requires Darktide's Windows Oodle DLL (unsupported on this platform)";
+    return false;
+#endif
+}
 
 bool configure_oodle(const std::filesystem::path& dll_or_game_directory, std::string& error) {
 #ifdef _WIN32
@@ -573,7 +584,7 @@ bool decode_image_rgba(const std::vector<std::uint8_t>& bytes,const std::string&
 #endif
 }
 
-bool normalize_image_for_verified_family(const ImageRGBA& source,const TextureProfile& profile,ImageRGBA& out,bool& changed,std::string& error){
+bool normalize_image_for_family(const ImageRGBA& source,const TextureProfile& profile,ImageRGBA& out,bool& changed,std::string& error){
     if(source.width==0||source.height==0||static_cast<std::size_t>(source.width)>std::numeric_limits<std::size_t>::max()/static_cast<std::size_t>(source.height)||static_cast<std::size_t>(source.width)*source.height>std::numeric_limits<std::size_t>::max()/4||source.pixels.size()!=static_cast<std::size_t>(source.width)*source.height*4){error="invalid RGBA image";return false;}
     const auto target=[](std::uint32_t v){std::uint32_t p=1;while(p<v&&p<8192)p<<=1;return std::clamp(p,512u,8192u);};
     const auto dw=target(source.width),dh=target(source.height); changed=dw!=source.width||dh!=source.height;
@@ -596,8 +607,8 @@ bool normalize_image_for_verified_family(const ImageRGBA& source,const TexturePr
     return true;
 }
 
-bool normalize_image_for_verified_family(const ImageRGBA& source,ImageRGBA& out,bool& changed,std::string& error){
-    return normalize_image_for_verified_family(source,substance_basic_bc_profile(),out,changed,error);
+bool normalize_image_for_family(const ImageRGBA& source,ImageRGBA& out,bool& changed,std::string& error){
+    return normalize_image_for_family(source,substance_basic_bc_profile(),out,changed,error);
 }
 
 std::string make_texture_stream_name(const std::string& resource_name){std::ostringstream ss;ss<<std::hex<<std::nouppercase<<std::setfill('0')<<std::setw(16)<<id64("texture-stream:"+resource_name);return "data/am/"+ss.str()+".stream";}
@@ -608,7 +619,7 @@ bool write_native_texture_rgba(const ImageRGBA& source,const TextureProfile& pro
 #else
     error="native texture writing requires Darktide's Windows Oodle DLL (unsupported on this platform)";return false;
 #endif
-    ImageRGBA base;bool normalized=false;if(!normalize_image_for_verified_family(source,profile,base,normalized,error))return false;const auto dims=mip_dims(base.width,base.height);if(dims.empty()||dims.size()>16){error="texture mip table is outside verified family";return false;}const auto sc=streamed_mips(dims,profile.block_bytes);if(sc==std::numeric_limits<std::size_t>::max()){error="texture has no verified resident mip tail";return false;}
+    ImageRGBA base;bool normalized=false;if(!normalize_image_for_family(source,profile,base,normalized,error))return false;const auto dims=mip_dims(base.width,base.height);if(dims.empty()||dims.size()>16){error="texture mip count is outside 1..16";return false;}const auto sc=streamed_mips(dims,profile.block_bytes);if(sc==std::numeric_limits<std::size_t>::max()){error="texture has no resident mip tail";return false;}
     std::vector<SurfaceMip> mips;mips.reserve(dims.size());ImageRGBA cur=base;for(std::size_t i=0;i<dims.size();++i){std::string e;auto enc=encode_surface(cur,profile,e);if(enc.empty()&&!e.empty()){error=e;return false;}mips.push_back({cur.width,cur.height,std::move(enc)});if(i+1<dims.size()){if(profile.filtering==TextureFiltering::Normal)cur=downsample_normal(cur);else if(profile.filtering==TextureFiltering::ColorSrgb)cur=downsample_srgb(cur);else cur=downsample_linear(cur);}}
     std::vector<SurfaceMip> resident(mips.begin()+static_cast<std::ptrdiff_t>(sc),mips.end());const auto dds=build_dds(resident.front().width,resident.front().height,profile,resident);std::vector<std::uint8_t> packed_dds;
 #ifdef _WIN32
@@ -792,7 +803,7 @@ bool inspect_texture_blob(const std::vector<std::uint8_t>& blob,std::string& rep
     else if(flags==0x101u&&footer==0x6bd03744u)block=16u;
     else if(flags==0x001u&&footer==0x3390aba5u)block=16u;
     else if(flags==0x001u&&(footer==0xe514d1dcu||footer==0xae01e4bcu))block=8u;
-    if(!block){error="kind-1 texture flags/footer do not match a verified profile";return false;}
+    if(!block){error="kind-1 texture flags/footer do not match a known profile";return false;}
     std::size_t external_bytes=0,resident_payload_bytes=0,mip_count=0;
     bool saw_empty=false;
     for(std::size_t i=0;i<16;++i){

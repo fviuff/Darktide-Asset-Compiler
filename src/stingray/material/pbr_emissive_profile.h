@@ -17,6 +17,9 @@ struct PbrEmissiveProfileSpec {
     std::array<float, 3> color{1.0f, 0.03f, 0.0f};
     float intensity = 1.0f;
     std::string surface_material = "metal_sheet";
+    // basic_weapon_emissive's variable set (tint off, like most of the game's materials on it); the caller
+    // points the material at that shader
+    bool weapon = false;
 };
 
 std::uint64_t pbr_emissive_shader_provider_material_hash();

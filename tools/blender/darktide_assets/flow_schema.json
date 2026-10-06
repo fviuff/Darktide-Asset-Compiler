@@ -1,0 +1,231 @@
+{
+ "unit_spawned": {
+  "inputs": {},
+  "outputs": {
+   "unit": "unit"
+  },
+  "in_events": [],
+  "out_events": ["out"]
+ },
+ "unit_unspawned": {
+  "inputs": {},
+  "outputs": {
+   "unit": "unit"
+  },
+  "in_events": [],
+  "out_events": ["out"]
+ },
+ "external_event": {
+  "inputs": {},
+  "outputs": {},
+  "in_events": [],
+  "out_events": ["out"]
+ },
+ "particle_effect": {
+  "inputs": {
+   "effect": "string",
+   "object": "name",
+   "linked": "bool",
+   "orphaned_policy": "uint",
+   "offset": "vector3",
+   "rotation_offset": "quaternion",
+   "unit": "unit"
+  },
+  "outputs": {
+   "effect_id": "uint"
+  },
+  "in_events": ["create", "stop", "kill"],
+  "out_events": []
+ },
+ "set_unit_visibility": {
+  "inputs": {
+   "unit": "unit",
+   "group": "name",
+   "visible": "bool"
+  },
+  "outputs": {},
+  "in_events": ["in"],
+  "out_events": ["out"]
+ },
+ "animation_event": {
+  "inputs": {
+   "event": "string",
+   "unit": "unit"
+  },
+  "outputs": {},
+  "in_events": ["in"],
+  "out_events": ["out"]
+ },
+ "delay": {
+  "inputs": {
+   "time": "float"
+  },
+  "outputs": {},
+  "in_events": ["in"],
+  "out_events": ["out"]
+ },
+ "once": {
+  "inputs": {},
+  "outputs": {},
+  "in_events": ["in"],
+  "out_events": ["out"]
+ },
+ "gate": {
+  "inputs": {
+   "start_open": "bool"
+  },
+  "outputs": {},
+  "in_events": ["pass", "open", "close", "toggle"],
+  "out_events": ["out"]
+ },
+ "branch": {
+  "inputs": {
+   "condition": "bool"
+  },
+  "outputs": {},
+  "in_events": ["in"],
+  "out_events": ["true", "false"]
+ },
+ "compare": {
+  "inputs": {
+   "a": "float",
+   "b": "float"
+  },
+  "outputs": {},
+  "in_events": ["in"],
+  "out_events": ["less", "less_or_equal", "equal", "greater_or_equal", "greater"]
+ },
+ "fork": {
+  "inputs": {},
+  "outputs": {},
+  "in_events": ["in"],
+  "out_events": ["out_1", "out_2", "out_3", "out_4", "out_5", "out_6", "out_7", "out_8"]
+ },
+ "counter": {
+  "inputs": {
+   "start": "float",
+   "step": "float"
+  },
+  "outputs": {
+   "value": "float"
+  },
+  "in_events": ["add", "subtract", "reset"],
+  "out_events": ["out"]
+ },
+ "random_float": {
+  "inputs": {
+   "min": "float",
+   "max": "float"
+  },
+  "outputs": {
+   "value": "float"
+  },
+  "in_events": [],
+  "out_events": []
+ },
+ "vector3": {
+  "inputs": {
+   "x": "float",
+   "y": "float",
+   "z": "float"
+  },
+  "outputs": {
+   "vector": "vector3"
+  },
+  "in_events": [],
+  "out_events": []
+ },
+ "get_mesh": {
+  "inputs": {
+   "unit": "unit",
+   "name": "string"
+  },
+  "outputs": {
+   "mesh": "mesh"
+  },
+  "in_events": [],
+  "out_events": []
+ },
+ "get_material": {
+  "inputs": {
+   "mesh": "mesh",
+   "name": "string"
+  },
+  "outputs": {
+   "material": "material"
+  },
+  "in_events": [],
+  "out_events": []
+ },
+ "set_material_variable": {
+  "inputs": {
+   "material": "material",
+   "variable": "string",
+   "value": "float",
+   "vector": "vector3"
+  },
+  "outputs": {},
+  "in_events": ["in"],
+  "out_events": ["out"]
+ },
+ "get_light": {
+  "inputs": {
+   "unit": "unit",
+   "name": "string"
+  },
+  "outputs": {
+   "light": "light"
+  },
+  "in_events": [],
+  "out_events": []
+ },
+ "set_light_intensity": {
+  "inputs": {
+   "unit": "unit",
+   "light": "light",
+   "intensity": "float"
+  },
+  "outputs": {},
+  "in_events": ["in"],
+  "out_events": []
+ },
+ "set_light_color": {
+  "inputs": {
+   "unit": "unit",
+   "light": "light",
+   "color": "vector3"
+  },
+  "outputs": {},
+  "in_events": ["in"],
+  "out_events": []
+ },
+ "get_data_bool": {
+  "inputs": {
+   "unit": "unit",
+   "key": "string"
+  },
+  "outputs": {
+   "value": "bool"
+  },
+  "in_events": [],
+  "out_events": []
+ },
+ "get_data_number": {
+  "inputs": {
+   "unit": "unit",
+   "key": "string"
+  },
+  "outputs": {
+   "value": "float"
+  },
+  "in_events": [],
+  "out_events": []
+ },
+ "lua": {
+  "inputs": {},
+  "outputs": {},
+  "in_events": ["in"],
+  "out_events": ["out"],
+  "dynamic": true
+ }
+}

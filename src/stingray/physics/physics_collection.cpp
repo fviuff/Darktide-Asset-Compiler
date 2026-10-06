@@ -11,6 +11,7 @@
 #include <PxPhysicsAPI.h>
 
 #include <algorithm>
+#include <sstream>
 #include <cmath>
 #include <limits>
 #include <memory>
@@ -46,7 +47,11 @@ PxTransform transform(const Matrix4& m) {
 }
 
 bool valid_limits(const CollectionJoint& j) {
-    return std::isfinite(j.twist_lower) && std::isfinite(j.twist_upper) &&
+    return std::isfinite(j.linear_lower) && std::isfinite(j.linear_upper) && j.linear_lower <= j.linear_upper &&
+           std::isfinite(j.drive_stiffness) && std::isfinite(j.drive_damping) && j.drive_stiffness >= 0.0f &&
+           j.drive_damping >= 0.0f && std::isfinite(j.break_force) && std::isfinite(j.break_torque) &&
+           j.break_force >= 0.0f && j.break_torque >= 0.0f &&
+           std::isfinite(j.twist_lower) && std::isfinite(j.twist_upper) &&
            std::isfinite(j.swing_y) && std::isfinite(j.swing_z) &&
            j.twist_lower <= j.twist_upper && j.twist_lower > -PxTwoPi && j.twist_upper < PxTwoPi &&
            j.swing_y > 0.0f && j.swing_z > 0.0f && j.swing_y < PxPi && j.swing_z < PxPi;
@@ -173,7 +178,7 @@ bool serialize_physics_collections(const std::vector<CollectionBody>& bodies,
                 error = "unknown joint motion mode";
                 return false;
             }
-        if (joint.motion[0] == CollectionMotion::Limited || joint.motion[1] == CollectionMotion::Limited || joint.motion[2] == CollectionMotion::Limited) { error = "linear limited D6 motion is unsupported without linear limits"; return false; }
+        if (joint.motion[1] == CollectionMotion::Limited || joint.motion[2] == CollectionMotion::Limited) { error = "only the x axis takes linear limits"; return false; }
     }
 
     std::lock_guard<std::recursive_mutex> guard(physx_context_mutex());
@@ -292,6 +297,17 @@ bool serialize_physics_collections(const std::vector<CollectionBody>& bodies,
         if (!joint) { fail("failed to create D6 joint"); break; } joint->setName(source.name.c_str());
         for (PxD6Axis::Enum axis : {PxD6Axis::eX, PxD6Axis::eY, PxD6Axis::eZ, PxD6Axis::eTWIST, PxD6Axis::eSWING1, PxD6Axis::eSWING2}) joint->setMotion(axis, to_motion(source.motion[static_cast<std::size_t>(axis)]));
         joint->setTwistLimit(PxJointAngularLimitPair(source.twist_lower, source.twist_upper)); joint->setSwingLimit(PxJointLimitCone(source.swing_y, source.swing_z));
+        if (source.motion[0] == CollectionMotion::Limited)
+            joint->setLinearLimit(PxD6Axis::eX, PxJointLinearLimitPair(physics->getTolerancesScale(), source.linear_lower, source.linear_upper));
+        if (source.drive != CollectionJoint::Drive::None && (source.drive_stiffness > 0.0f || source.drive_damping > 0.0f)) {
+            const PxD6JointDrive drive(source.drive_stiffness, source.drive_damping, PX_MAX_F32);
+            if (source.drive == CollectionJoint::Drive::X) joint->setDrive(PxD6Drive::eX, drive);
+            else joint->setDrive(PxD6Drive::eTWIST, drive);
+            if (source.drive == CollectionJoint::Drive::SwingTwist) joint->setDrive(PxD6Drive::eSWING, drive);
+        }
+        if (source.break_force > 0.0f || source.break_torque > 0.0f)
+            joint->setBreakForce(source.break_force > 0.0f ? source.break_force : PX_MAX_F32,
+                                 source.break_torque > 0.0f ? source.break_torque : PX_MAX_F32);
         joint->setConstraintFlag(PxConstraintFlag::eCOLLISION_ENABLED, source.collision_enabled); objects->add(*joint, new_id()); joints_owned.push_back(joint);
     }
     if (ok) {
@@ -334,6 +350,54 @@ bool serialize_physics_collections(const std::vector<CollectionBody>& bodies,
     if (!physics_last_error().empty() && ok) { error = physics_last_error(); ok = false; }
     if (!ok) output = {};
     return ok;
+}
+
+bool describe_physics_joints(const std::vector<std::uint8_t>& dependencies, const std::vector<std::uint8_t>& objects,
+                             std::string& out, std::string& error) {
+    std::lock_guard<std::recursive_mutex> guard(physx_context_mutex());
+    PxFoundation* foundation = physics_foundation(error);
+    if (!foundation) return false;
+    PxTolerancesScale scale;
+    SdkObjects resources;
+    PxPhysics* physics = resources.physics = PxCreatePhysics(PX_PHYSICS_VERSION, *foundation, scale, true, nullptr);
+    if (!physics) { error = "PxCreatePhysics failed"; return false; }
+    resources.extensions = PxInitExtensions(*physics, nullptr);
+    PxSerializationRegistry* registry = resources.registry = resources.extensions ? PxSerialization::createSerializationRegistry(*physics) : nullptr;
+    if (!registry) { error = "PhysX serialization registry initialization failed"; return false; }
+    AlignedBuffer dep_memory(dependencies.size()), obj_memory(objects.size());
+    std::memcpy(dep_memory.data, dependencies.data(), dependencies.size());
+    std::memcpy(obj_memory.data, objects.data(), objects.size());
+    ReloadedCollections loaded;
+    loaded.dependencies = PxSerialization::createCollectionFromBinary(dep_memory.data, *registry);
+    loaded.objects = loaded.dependencies ? PxSerialization::createCollectionFromBinary(obj_memory.data, *registry, loaded.dependencies) : nullptr;
+    if (!loaded.objects) { error = "the physics collections do not load"; return false; }
+    static const char* motions[] = {"locked", "limited", "free"};
+    static const char* axes[] = {"x", "y", "z", "twist", "swing1", "swing2"};
+    static const char* drives[] = {"x", "y", "z", "swing", "twist", "slerp"};
+    std::ostringstream text;
+    for (PxU32 i = 0; i < loaded.objects->getNbObjects(); ++i) {
+        auto* joint = loaded.objects->getObject(i).is<PxD6Joint>();
+        if (!joint) continue;
+        text << "joint " << (joint->getName() ? joint->getName() : "") << ":";
+        for (int axis = 0; axis < 6; ++axis)
+            text << " " << axes[axis] << "=" << motions[joint->getMotion(static_cast<PxD6Axis::Enum>(axis))];
+        const auto twist = joint->getTwistLimit();
+        const auto swing = joint->getSwingLimit();
+        const auto linear = joint->getLinearLimit(PxD6Axis::eX);
+        text << " twist " << twist.lower << ".." << twist.upper << " swing " << swing.yAngle << "/" << swing.zAngle
+             << " x " << linear.lower << ".." << linear.upper;
+        for (int d = 0; d < 6; ++d) {
+            const auto drive = joint->getDrive(static_cast<PxD6Drive::Enum>(d));
+            if (drive.stiffness > 0.0f || drive.damping > 0.0f)
+                text << " drive " << drives[d] << " " << drive.stiffness << "/" << drive.damping;
+        }
+        PxReal force = 0, torque = 0;
+        joint->getBreakForce(force, torque);
+        if (force < PX_MAX_F32 || torque < PX_MAX_F32) text << " breaks " << force << "/" << torque;
+        text << '\n';
+    }
+    out = text.str();
+    return true;
 }
 
 } // namespace dtglb::stingray::physics

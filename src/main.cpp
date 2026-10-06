@@ -5,14 +5,23 @@
 #include "stingray/texture/texture_writer.h"
 #include "stingray/cooked_resource.h"
 #include "stingray/particles/particles_resource.h"
+#include "stingray/flow/flow_resource.h"
+#include "stingray/flow/flow_authoring.h"
+#include "stingray/unit/script_data.h"
+#include "stingray/material/shader_compiler.h"
+#include "stingray/material/shader_section.h"
+#include "stingray/physics/physics_collection.h"
 #include "third_party_licenses.h"
+#include <algorithm>
 #include <charconv>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
 #include <limits>
+#include <sstream>
 #include <string>
 #ifdef _WIN32
 #define NOMINMAX
@@ -30,6 +39,12 @@ static void usage() {
         "  DarktideGLBCompiler --validate <file.unit>\n"
         "  DarktideGLBCompiler --particles <file.particles> [out.json]   (a particle effect as its JSON description)\n"
         "  DarktideGLBCompiler --particles-schema   (the particle components and their fields, as JSON)\n"
+        "  DarktideGLBCompiler --flow <unit.flow> [out.json]   (a unit flow graph as JSON; reads <unit>.flowdyn beside it)\n"
+        "  DarktideGLBCompiler --flow-schema   (the flow node types with their inputs, outputs and events, as JSON)\n"
+        "  DarktideGLBCompiler --flow-build <flow.json>   (an authored flow graph as the --flow description)\n"
+        "  DarktideGLBCompiler --unit-data <file>   (a unit's script data bytes as JSON)\n"
+        "  DarktideGLBCompiler --shader <material stream>   (the compiled shaders of a shader material, summarized as JSON)\n"
+        "  DarktideGLBCompiler --shader-reflect <stage.dxbc>...   (binding records of compiled stages of one shader group, in order)\n"
         "  DarktideGLBCompiler --configure-oodle <game directory or oo2core_9_win64.dll>\n"
         "  DarktideGLBCompiler --capabilities\n\n"
         "  DarktideGLBCompiler --licenses\n\n"
@@ -87,6 +102,37 @@ static void capabilities() {
 
 // A particles resource as its JSON description (stdout or a file); the description is written back to binary
 // and must give the same bytes.
+// A unit flow blob (and its dynamic data, <name>.flowdyn) as its JSON description; it must encode back to the
+// same bytes.
+static bool flow_description(const fs::path& input, const fs::path& output, std::string& error) {
+    const auto read = [](const fs::path& path, std::vector<std::uint8_t>& out) {
+        std::ifstream file(path, std::ios::binary);
+        if (!file) return false;
+        out.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+        return true;
+    };
+    std::vector<std::uint8_t> flow, dynamic_data, flow_again, dynamic_again;
+    if (!read(input, flow)) { error = "cannot read the file"; return false; }
+    auto dynamic_path = input;
+    dynamic_path.replace_extension(".flowdyn");
+    if (fs::exists(dynamic_path) && !read(dynamic_path, dynamic_data)) { error = "cannot read " + dynamic_path.string(); return false; }
+    dtglb::json::Value graph;
+    if (!dtglb::stingray::flow::decode(flow, dynamic_data, graph, error)) return false;
+    if (!dtglb::stingray::flow::encode(graph, flow_again, dynamic_again, error)) { error = "description does not encode: " + error; return false; }
+    if (flow_again != flow || dynamic_again != dynamic_data) {
+        std::size_t at = 0;
+        while (at < flow_again.size() && at < flow.size() && flow_again[at] == flow[at]) ++at;
+        error = "description encodes to different bytes (flow first difference at byte " + std::to_string(at) + ")";
+        return false;
+    }
+    const auto text = dtglb::json::dump(graph) + "\n";
+    if (output.empty()) { std::cout << text; return true; }
+    std::ofstream out(output, std::ios::binary);
+    out << text;
+    if (!out) { error = "cannot write " + output.string(); return false; }
+    return true;
+}
+
 static bool particles_description(const fs::path& input, const fs::path& output, std::string& error) {
     std::ifstream file(input, std::ios::binary);
     const std::vector<std::uint8_t> blob((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
@@ -201,6 +247,112 @@ int main(int argc, char** argv) {
     if (std::string(argv[1]) == "--particles-schema") {
         if (argc != 2) { usage(); return 1; }
         std::cout << dtglb::json::dump(dtglb::stingray::particles::schema()) << '\n';
+        return 0;
+    }
+    if (std::string(argv[1]) == "--unit-data") {
+        if (argc != 3) { usage(); return 1; }
+        std::ifstream file(argv[2], std::ios::binary);
+        const std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        dtglb::json::Value data;
+        std::vector<std::uint8_t> again;
+        std::string error;
+        if (!file.good() && !file.eof()) error = "cannot read the file";
+        else if (dtglb::stingray::unit::decode_script_data(bytes, data, error) &&
+                 dtglb::stingray::unit::encode_script_data(data, again, error) && again != bytes)
+            error = "data encodes to different bytes";
+        if (!error.empty()) { std::cerr << argv[2] << ": " << error << '\n'; return 2; }
+        std::cout << dtglb::json::dump(data) << '\n';
+        return 0;
+    }
+    if (std::string(argv[1]) == "--shader") {
+        if (argc != 3) { usage(); return 1; }
+        std::ifstream file(argv[2], std::ios::binary);
+        const std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        std::string error;
+        std::uint32_t header[7] = {};
+        if (bytes.size() >= sizeof(header)) std::memcpy(header, bytes.data(), sizeof(header));
+        dtglb::stingray::material::ShaderSection section;
+        if (bytes.size() < sizeof(header)) error = "not a material stream";
+        else if (!header[4] || header[3] > bytes.size() || header[4] > bytes.size() - header[3]) error = "the stream has no shader section";
+        else dtglb::stingray::material::decode_shader_section(
+            std::vector<std::uint8_t>(bytes.begin() + header[3], bytes.begin() + header[3] + header[4]), section, error);
+        if (!error.empty()) { std::cerr << argv[2] << ": " << error << '\n'; return 2; }
+        std::cout << dtglb::json::dump(dtglb::stingray::material::describe_shader_section(section)) << '\n';
+        return 0;
+    }
+    if (std::string(argv[1]) == "--physics-joints") {
+        // the unit's physics scene: u32 size, then the dependency and object collections (each starting "SEBD")
+        // with a 128-byte header at the end giving their offsets and sizes
+        if (argc != 3) { usage(); return 1; }
+        std::ifstream file(argv[2], std::ios::binary);
+        const std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        const char magic[] = {'S', 'E', 'B', 'D'};
+        const auto start = std::search(bytes.begin(), bytes.end(), std::begin(magic), std::end(magic));
+        std::string error, text;
+        const std::size_t at = static_cast<std::size_t>(start - bytes.begin());
+        std::uint32_t size = 0;
+        if (start == bytes.end() || at < 4) error = "the unit has no physics collections";
+        else {
+            std::memcpy(&size, bytes.data() + at - 4, 4);
+            if (size < 128 || size > bytes.size() - at) error = "the physics scene is truncated";
+        }
+        if (error.empty()) {
+            const auto* scene = bytes.data() + at;
+            const auto word = [&](std::size_t offset) { std::uint32_t v; std::memcpy(&v, scene + size - 128 + offset, 4); return v; };
+            const auto slice = [&](std::uint32_t offset, std::uint32_t length) {
+                return offset <= size && length <= size - offset ? std::vector<std::uint8_t>(scene + offset, scene + offset + length)
+                                                                 : std::vector<std::uint8_t>();
+            };
+            const auto dependencies = slice(word(8), word(12)), objects = slice(word(80), word(84));
+            if (dependencies.empty() || objects.empty()) error = "the physics scene header does not match";
+            else dtglb::stingray::physics::describe_physics_joints(dependencies, objects, text, error);
+        }
+        if (!error.empty()) { std::cerr << argv[2] << ": " << error << '\n'; return 2; }
+        std::cout << text;
+        return 0;
+    }
+    if (std::string(argv[1]) == "--shader-reflect") {
+        if (argc < 3) { usage(); return 1; }
+        dtglb::stingray::material::RootTable roots;
+        auto out = dtglb::json::Value::array();
+        for (int i = 2; i < argc; ++i) {
+            std::ifstream file(argv[i], std::ios::binary);
+            const std::vector<std::uint8_t> dxbc((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+            dtglb::stingray::material::ShaderVariant variant;
+            std::string error;
+            if (dxbc.empty()) error = "cannot read the file";
+            else dtglb::stingray::material::make_shader_variant(dxbc, roots, variant, error);
+            if (!error.empty()) { std::cerr << argv[i] << ": " << error << '\n'; return 2; }
+            out.push(dtglb::stingray::material::describe_shader_variant(variant));
+        }
+        std::cout << dtglb::json::dump(out) << '\n';
+        return 0;
+    }
+    if (std::string(argv[1]) == "--flow-build") {
+        if (argc != 3) { usage(); return 1; }
+        std::ifstream file(argv[2], std::ios::binary);
+        const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        dtglb::json::Value authored, graph;
+        std::string error;
+        if (!file || !dtglb::json::parse(text, authored, error) || !dtglb::stingray::flow::build_graph(authored, graph, error)) {
+            std::cerr << argv[2] << ": " << (error.empty() ? "cannot read the file" : error) << '\n';
+            return 2;
+        }
+        std::cout << dtglb::json::dump(graph) << '\n';
+        return 0;
+    }
+    if (std::string(argv[1]) == "--flow-schema") {
+        if (argc != 2) { usage(); return 1; }
+        std::cout << dtglb::json::dump(dtglb::stingray::flow::authoring_schema()) << '\n';
+        return 0;
+    }
+    if (std::string(argv[1]) == "--flow") {
+        if (argc < 3 || argc > 4) { usage(); return 1; }
+        std::string error;
+        if (!flow_description(fs::path(argv[2]), argc == 4 ? fs::path(argv[3]) : fs::path(), error)) {
+            std::cerr << argv[2] << ": " << error << '\n';
+            return 2;
+        }
         return 0;
     }
     if (std::string(argv[1]) == "--particles") {
@@ -392,6 +544,150 @@ int main(int argc, char** argv) {
             }
             state.looping = mode == "loop";
             opt.state_machine_states.push_back(std::move(state));
+        }
+        else if (a == "--sm-blend") {
+            if (i + 4 >= argc) { std::cerr << "--sm-blend requires NAME VARIABLE_INDEX[,VARIABLE_INDEX] loop|once CLIP:VALUE[:VALUE2][,...]\n"; return 1; }
+            dtglb::app::StateMachineStateOption state;
+            state.name = argv[++i];
+            // one variable index, or two (X,Y) for a 2D blend whose clips are CLIP:X:Y
+            const std::string variables = argv[++i];
+            const auto comma = variables.find(',');
+            if (!parse_scene_index(variables.substr(0, comma), state.blend_variable) ||
+                (comma != std::string::npos && !parse_scene_index(variables.substr(comma + 1), state.blend_variable2))) {
+                std::cerr << "Invalid --sm-blend variable index: " << variables << "\n"; return 1;
+            }
+            const std::string mode = argv[++i];
+            if (mode != "loop" && mode != "once") {
+                std::cerr << "Invalid --sm-blend mode: " << mode << " (expected loop or once)\n"; return 1;
+            }
+            state.looping = mode == "loop";
+            std::stringstream list(argv[++i]);
+            std::string entry;
+            while (std::getline(list, entry, ',')) {
+                const auto colon = entry.find(':');
+                const auto second = colon == std::string::npos ? colon : entry.find(':', colon + 1);
+                const bool two_d = state.blend_variable2 >= 0;
+                int clip = -1;
+                float value = 0.0f, value2 = 0.0f;
+                if (colon == std::string::npos || (second != std::string::npos) != two_d ||
+                    !parse_scene_index(entry.substr(0, colon), clip) ||
+                    !parse_signed_finite_float(entry.substr(colon + 1, second == std::string::npos ? std::string::npos : second - colon - 1), value) ||
+                    (two_d && !parse_signed_finite_float(entry.substr(second + 1), value2))) {
+                    std::cerr << "Invalid --sm-blend clip entry: " << entry << (two_d ? " (expected CLIP:X:Y)\n" : " (expected CLIP:VALUE)\n"); return 1;
+                }
+                state.blend.push_back({clip, value});
+                state.blend_value2.push_back(value2);
+            }
+            if (state.blend.empty()) { std::cerr << "--sm-blend needs at least one CLIP:VALUE\n"; return 1; }
+            opt.state_machine_states.push_back(std::move(state));
+        }
+        else if (a == "--sm-random") {
+            if (i + 4 >= argc) { std::cerr << "--sm-random requires NAME on_entry|every_loop|no_repeat loop|once CLIP:WEIGHT[,CLIP:WEIGHT...]\n"; return 1; }
+            dtglb::app::StateMachineStateOption state;
+            state.name = argv[++i];
+            const std::string pick = argv[++i];
+            if (pick == "on_entry") state.randomization = 0;
+            else if (pick == "every_loop") state.randomization = 1;
+            else if (pick == "no_repeat") state.randomization = 2;
+            else { std::cerr << "Invalid --sm-random pick mode: " << pick << " (on_entry, every_loop or no_repeat)\n"; return 1; }
+            const std::string mode = argv[++i];
+            if (mode != "loop" && mode != "once") { std::cerr << "Invalid --sm-random mode: " << mode << " (expected loop or once)\n"; return 1; }
+            state.looping = mode == "loop";
+            state.random = true;
+            std::stringstream list(argv[++i]);
+            std::string entry;
+            while (std::getline(list, entry, ',')) {
+                const auto colon = entry.find(':');
+                int clip = -1;
+                float weight = 1.0f;
+                if (!parse_scene_index(entry.substr(0, colon), clip) ||
+                    (colon != std::string::npos && !parse_signed_finite_float(entry.substr(colon + 1), weight)) || !(weight > 0.0f)) {
+                    std::cerr << "Invalid --sm-random clip entry: " << entry << " (expected CLIP or CLIP:WEIGHT, weight above 0)\n"; return 1;
+                }
+                state.blend.push_back({clip, weight});
+            }
+            if (state.blend.size() < 2) { std::cerr << "--sm-random needs at least two clips\n"; return 1; }
+            opt.state_machine_states.push_back(std::move(state));
+        }
+        else if (a == "--sm-speed") {
+            if (i + 2 >= argc) { std::cerr << "--sm-speed requires STATE_NAME SPEED|var:VARIABLE_INDEX\n"; return 1; }
+            const std::string name = argv[++i];
+            const std::string value = argv[++i];
+            const auto state = std::find_if(opt.state_machine_states.begin(), opt.state_machine_states.end(),
+                [&](const auto& s) { return s.name == name; });
+            if (state == opt.state_machine_states.end()) { std::cerr << "--sm-speed names no earlier --sm-state or --sm-blend: " << name << "\n"; return 1; }
+            if (value.rfind("var:", 0) == 0) {
+                if (!parse_scene_index(value.substr(4), state->speed_variable)) { std::cerr << "Invalid --sm-speed variable index: " << value << "\n"; return 1; }
+            } else if (!parse_signed_finite_float(value, state->speed)) {
+                std::cerr << "Invalid --sm-speed value: " << value << "\n"; return 1;
+            }
+        }
+        else if (a == "--sm-empty") {
+            if (i + 2 >= argc) { std::cerr << "--sm-empty requires NAME LAYER\n"; return 1; }
+            dtglb::app::StateMachineStateOption state;
+            state.name = argv[++i];
+            state.empty = true;
+            if (!parse_scene_index(argv[++i], state.layer)) { std::cerr << "Invalid --sm-empty layer: " << argv[i] << "\n"; return 1; }
+            opt.state_machine_states.push_back(std::move(state));
+        }
+        else if (a == "--sm-events" || a == "--sm-exit") {
+            const bool exit = a == "--sm-exit";
+            if (i + (exit ? 3 : 2) >= argc) {
+                std::cerr << a << (exit ? " requires STATE_NAME EVENT SECONDS_LEFT\n" : " requires STATE_NAME SECONDS:EVENT[,SECONDS:EVENT...]\n");
+                return 1;
+            }
+            const std::string name = argv[++i];
+            const auto state = std::find_if(opt.state_machine_states.begin(), opt.state_machine_states.end(),
+                [&](const auto& s) { return s.name == name; });
+            if (state == opt.state_machine_states.end()) { std::cerr << a << " names no earlier state: " << name << "\n"; return 1; }
+            if (exit) {
+                state->exit_event = argv[++i];
+                if (state->exit_event.empty() || !parse_signed_finite_float(argv[++i], state->exit_blend) || state->exit_blend < 0.0f) {
+                    std::cerr << "Invalid --sm-exit event or time\n"; return 1;
+                }
+                continue;
+            }
+            std::stringstream list(argv[++i]);
+            std::string entry;
+            while (std::getline(list, entry, ',')) {
+                const auto colon = entry.find(':');
+                float time = 0.0f;
+                if (colon == std::string::npos || colon + 1 == entry.size() ||
+                    !parse_signed_finite_float(entry.substr(0, colon), time) || time < 0.0f) {
+                    std::cerr << "Invalid --sm-events entry: " << entry << " (expected SECONDS:EVENT)\n"; return 1;
+                }
+                state->events_at.push_back({time, entry.substr(colon + 1)});
+            }
+        }
+        else if (a == "--sm-layer" || a == "--sm-mask" || a == "--sm-additive") {
+            const bool takes_value = a != "--sm-additive";
+            if (i + (takes_value ? 2 : 1) >= argc) {
+                std::cerr << a << (a == "--sm-layer" ? " requires STATE_NAME LAYER\n" : a == "--sm-mask" ? " requires STATE_NAME BONE[:WEIGHT][,BONE[:WEIGHT]...]\n" : " requires STATE_NAME\n");
+                return 1;
+            }
+            const std::string name = argv[++i];
+            const auto state = std::find_if(opt.state_machine_states.begin(), opt.state_machine_states.end(),
+                [&](const auto& s) { return s.name == name; });
+            if (state == opt.state_machine_states.end()) { std::cerr << a << " names no earlier state: " << name << "\n"; return 1; }
+            if (a == "--sm-additive") { state->additive = true; continue; }
+            const std::string value = argv[++i];
+            if (a == "--sm-layer") {
+                if (!parse_scene_index(value, state->layer)) { std::cerr << "Invalid --sm-layer layer: " << value << "\n"; return 1; }
+                continue;
+            }
+            std::stringstream list(value);
+            std::string entry;
+            while (std::getline(list, entry, ',')) {
+                const auto colon = entry.find(':');
+                float weight = 1.0f;
+                const auto bone = entry.substr(0, colon);
+                if (bone.empty() || (colon != std::string::npos && !parse_signed_finite_float(entry.substr(colon + 1), weight)) ||
+                    weight < 0.0f || weight > 1.0f) {
+                    std::cerr << "Invalid --sm-mask entry: " << entry << " (expected BONE or BONE:WEIGHT, weight 0 to 1)\n"; return 1;
+                }
+                state->mask.push_back({bone, weight});
+            }
+            if (state->mask.empty()) { std::cerr << "--sm-mask needs at least one bone\n"; return 1; }
         }
         else if (a == "--sm-transition") {
             if (i + 4 >= argc) { std::cerr << "--sm-transition requires FROM_INDEX TO_INDEX EVENT_NAME BLEND_SECONDS\n"; return 1; }

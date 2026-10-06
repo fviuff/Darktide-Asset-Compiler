@@ -308,13 +308,74 @@ void populate_asset_definition(const cgltf_data* data, Scene& out) {
         const auto payload = authored_payload(data, data->nodes[index].extras);
         if (!payload) continue;
         const auto location = "node[" + std::to_string(index) + "].darktide_asset";
-        const auto members = authored_members(*payload, location, {"version", "id", "body", "collider", "joint", "visibility_group", "dangle", "particles"});
+        const auto members = authored_members(*payload, location, {"version", "id", "body", "collider", "joint", "visibility_group", "dangle", "aim", "particles", "lod", "render", "light", "flow", "data"});
+        if (const auto record = members.find("data"); record != members.end()) {
+            // the unit's script data (Unit.get_data), a JSON object or a string holding it
+            if (!out.asset_definition.script_data.empty()) throw std::runtime_error(location + ".data: only one object may carry the unit data");
+            const auto text = authored_trim(record->second);
+            if (!text.empty() && text.front() == '"') {
+                if (text.size() < 2 || !json_unescape_string(text.substr(1, text.size() - 2), out.asset_definition.script_data))
+                    throw std::runtime_error(location + ".data: not a valid JSON string");
+            } else {
+                out.asset_definition.script_data = std::string(text);
+            }
+        }
+        if (const auto record = members.find("flow"); record != members.end()) {
+            // the unit's flow graph (flow_authoring.h), as a JSON object or a string holding it
+            if (!out.asset_definition.flow.empty()) throw std::runtime_error(location + ".flow: only one object may carry the unit flow");
+            const auto text = authored_trim(record->second);
+            if (!text.empty() && text.front() == '"') {
+                if (text.size() < 2 || !json_unescape_string(text.substr(1, text.size() - 2), out.asset_definition.flow))
+                    throw std::runtime_error(location + ".flow: not a valid JSON string");
+            } else {
+                out.asset_definition.flow = std::string(text);
+            }
+        }
+        if (const auto record = members.find("render"); record != members.end()) {
+            const auto where = location + ".render";
+            const auto fields = authored_members(record->second, where, {"visible", "shadow"});
+            RenderSetting setting;
+            setting.source_node = index;
+            for (const auto& [key, value] : fields) {
+                if (value != "true" && value != "false") throw std::runtime_error(where + "." + key + " must be true or false");
+                (key == "visible" ? setting.visible : setting.shadow) = value == "true";
+            }
+            if (!setting.visible && !setting.shadow)
+                throw std::runtime_error(where + ": a mesh that is neither visible nor casts a shadow draws nothing");
+            out.asset_definition.render_settings.push_back(setting);
+        }
+        if (const auto record = members.find("light"); record != members.end()) {
+            const auto where = location + ".light";
+            const auto fields = authored_members(record->second, where, {"shadow"});
+            if (const auto shadow = fields.find("shadow"); shadow != fields.end()) {
+                if (shadow->second != "true" && shadow->second != "false") throw std::runtime_error(where + ".shadow must be true or false");
+                if (shadow->second == "true") out.asset_definition.shadow_lights.push_back(index);
+            }
+        }
         const int version = authored_version_value(members, location);
         const auto id = authored_string(members, "id", location);
         if (!ids.insert(id).second) throw std::runtime_error(location + ": duplicate authored id '" + id + "'");
         if (members.count("visibility_group")) {
             const auto group = authored_string(members, "visibility_group", location);
             if (!group.empty()) out.asset_definition.visibility_groups.push_back({group, index});
+        }
+        if (const auto record = members.find("lod"); record != members.end()) {
+            const auto where = location + ".lod";
+            const auto fields = authored_members(record->second, where, {"group", "level", "down_to"});
+            LodLevel level;
+            level.group = authored_string(fields, "group", where, "lod");
+            const auto number = [&](const char* key) {
+                const auto found = fields.find(key);
+                return found == fields.end() ? 0.0f : authored_number(found->second, where + "." + key);
+            };
+            const float level_number = number("level");
+            if (level_number < 0 || level_number > 255 || level_number != static_cast<float>(static_cast<int>(level_number)))
+                throw std::runtime_error(where + ".level must be a whole number from 0");
+            level.level = static_cast<int>(level_number);
+            level.down_to = number("down_to");
+            if (level.down_to < 0) throw std::runtime_error(where + ".down_to must not be negative");
+            level.source_node = index;
+            out.asset_definition.lod_levels.push_back(std::move(level));
         }
         if (const auto record = members.find("particles"); record != members.end()) {
             const auto where = location + ".particles";
@@ -368,6 +429,16 @@ void populate_asset_definition(const cgltf_data* data, Scene& out) {
             number("max_stretch", dangle.max_stretch);
             out.asset_definition.dangles.push_back(dangle);
         }
+        if (const auto record = members.find("aim"); record != members.end()) {
+            const auto fields = authored_members(record->second, location + ".aim", {"target", "turn"});
+            AimDefinition aim; aim.source_node = index;
+            aim.target = authored_string(fields, "target", location + ".aim");
+            if (const auto turn = fields.find("turn"); turn != fields.end())
+                for (const auto& [bone, weight] : authored_members(turn->second, location + ".aim.turn", {}))
+                    aim.turn.push_back({bone, authored_number(weight, location + ".aim.turn." + bone)});
+            if (aim.target.empty() || aim.turn.empty()) throw std::runtime_error(location + ".aim needs a target and bones to turn");
+            out.asset_definition.aims.push_back(std::move(aim));
+        }
         if (version == 1) {
         authored_version(members, location);
         if (members.count("body") || members.count("joint")) throw std::runtime_error(location + ": version 1 node extras only support collider");
@@ -386,13 +457,19 @@ void populate_asset_definition(const cgltf_data* data, Scene& out) {
         if (const auto record = members.find("collider"); record != members.end())
             out.asset_definition.colliders.push_back(parse_node_collider(authored_members(record->second, location + ".collider", {"body", "shape", "role"}), location, index, id));
         if (const auto record = members.find("joint"); record != members.end()) {
-            const auto joint = authored_members(record->second, location + ".joint", {"body_a", "body_b", "kind", "twist_min", "twist_max", "swing_y", "swing_z"});
+            const auto joint = authored_members(record->second, location + ".joint", {"body_a", "body_b", "kind", "twist_min", "twist_max", "swing_y", "swing_z",
+                "slide_min", "slide_max", "spring_stiffness", "spring_damping", "break_force", "break_torque"});
             JointDefinition result; result.id = id; result.source_node = index;
             result.body_a = authored_string(joint, "body_a", location + ".joint"); result.body_b = authored_string(joint, "body_b", location + ".joint");
             const auto kind = authored_string(joint, "kind", location + ".joint");
-            if (kind == "fixed") result.kind = JointKind::Fixed; else if (kind == "hinge") result.kind = JointKind::Hinge; else if (kind == "ragdoll") result.kind = JointKind::Ragdoll; else throw std::runtime_error(location + ".joint: unsupported kind '" + kind + "'");
+            if (kind == "fixed") result.kind = JointKind::Fixed; else if (kind == "hinge") result.kind = JointKind::Hinge; else if (kind == "ragdoll") result.kind = JointKind::Ragdoll; else if (kind == "slider") result.kind = JointKind::Slider; else if (kind == "ball") result.kind = JointKind::Ball; else throw std::runtime_error(location + ".joint: unsupported kind '" + kind + "'");
             auto angle = [&](const char* key) -> std::optional<float> { const auto it = joint.find(key); return it == joint.end() ? std::nullopt : std::optional<float>(authored_number(it->second, location + ".joint." + key)); };
             result.twist_min = angle("twist_min"); result.twist_max = angle("twist_max"); if (const auto value = angle("swing_y")) result.swing_y = *value; if (const auto value = angle("swing_z")) result.swing_z = *value;
+            result.slide_min = angle("slide_min"); result.slide_max = angle("slide_max");
+            if (const auto value = angle("spring_stiffness")) result.spring_stiffness = *value;
+            if (const auto value = angle("spring_damping")) result.spring_damping = *value;
+            if (const auto value = angle("break_force")) result.break_force = *value;
+            if (const auto value = angle("break_torque")) result.break_torque = *value;
             out.asset_definition.joints.push_back(std::move(result));
         }
     }
@@ -1343,7 +1420,7 @@ MaterialInfo convert_material(const cgltf_data* data, const cgltf_material& sour
     material.name = source.name ? source.name : "material_" + std::to_string(index);
     if (const auto payload = authored_payload(data, source.extras, "darktide_material")) {
         const std::string location = "material[" + std::to_string(index) + "].extras.darktide_material";
-        const auto members = authored_members(*payload, location, {"version", "mode", "resource", "template", "surface", "family", "stream", "variable_overrides", "variables", "textures", "shader_streams"});
+        const auto members = authored_members(*payload, location, {"version", "mode", "resource", "template", "surface", "family", "stream", "variable_overrides", "variables", "textures", "shader_streams", "weapon"});
         authored_version(members, location, "darktide_material");
         const auto mode = authored_string(members, "mode", location);
         if (mode == "generated") {
@@ -1429,6 +1506,13 @@ MaterialInfo convert_material(const cgltf_data* data, const cgltf_material& sour
             material.surface_material = authored_string(members, "surface", location, "default");
         } else {
             throw std::runtime_error(location + ": mode must be generated, emissive, external, template, donor, or game_shader");
+        }
+        if (const auto weapon = members.find("weapon"); weapon != members.end()) {
+            if (material.intent != MaterialInfo::Intent::Generated)
+                throw std::runtime_error(location + ": weapon applies to generated materials only");
+            if (weapon->second != "true" && weapon->second != "false")
+                throw std::runtime_error(location + ": weapon must be true or false");
+            material.weapon = weapon->second == "true";
         }
     }
     material.double_sided = source.double_sided != 0;

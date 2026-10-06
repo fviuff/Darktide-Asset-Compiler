@@ -15,6 +15,21 @@ struct PlannedStateMachineState {
     std::string name;
     std::size_t animation_index = 0;
     bool looping = true;
+    std::vector<std::pair<std::size_t, float>> blend;   // animation index, variable value
+    std::size_t blend_variable = 0;
+    float speed = 1.0f;
+    int speed_variable = -1;
+    bool random = false;            // blend holds clip weights, one clip is picked
+    std::uint32_t randomization = 1;
+    std::size_t layer = 0;
+    bool empty = false;             // no clip: the layers below show through
+    std::vector<std::pair<std::string, float>> mask;   // bone name (with its children) -> weight
+    bool additive = false;
+    int blend_variable2 = -1;                // 2D blend: second variable, blend_value2 per clip
+    std::vector<float> blend_value2;
+    std::vector<std::pair<float, std::string>> events_at;
+    std::string exit_event;
+    float exit_blend = 0.2f;
 };
 
 struct CompilationPlan {

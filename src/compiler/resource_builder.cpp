@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <optional>
 #include <cmath>
+#include <map>
 #include <set>
 
 namespace dtglb::compiler {
@@ -311,6 +312,43 @@ bool build_glb_resources(const Scene& source, const app::CompileOptions& options
         }
         set_feature_status(feature_status, "dangling_bones", "emitted");
     }
+    // Aiming bones: the aim joint, and the bones that turn toward the target (by name), as BONES slots.
+    if (!source.asset_definition.aims.empty() && selected != no_skin) {
+        const auto& source_skin = source.skins[selected];
+        const auto source_names = canonical_bone_names(source_skin);
+        const auto emitted_names = canonical_bone_names(emitted_source->skins[selected]);
+        const auto slot_of = [&](int node, std::uint32_t& slot) {
+            const auto joint = std::find(source_skin.joints.begin(), source_skin.joints.end(), node);
+            if (joint == source_skin.joints.end()) return false;
+            const auto& name = source_names[static_cast<std::size_t>(joint - source_skin.joints.begin())];
+            const auto found = std::find(emitted_names.begin(), emitted_names.end(), name);
+            slot = static_cast<std::uint32_t>(found - emitted_names.begin());
+            return found != emitted_names.end();
+        };
+        for (const auto& aim : source.asset_definition.aims) {
+            stingray::BoneConstraint constraint;
+            constraint.kind = stingray::BoneConstraint::Kind::Aim;
+            constraint.target = aim.target;
+            const auto& aim_name = source.nodes[static_cast<std::size_t>(aim.source_node)].name;
+            if (!slot_of(aim.source_node, constraint.bone_slot)) {
+                error = "aiming bone '" + aim_name + "' is not a bone of the emitted skeleton";
+                return false;
+            }
+            for (const auto& [bone, weight] : aim.turn) {
+                int node = -1;
+                for (const int joint : source_skin.joints)
+                    if (source.nodes[static_cast<std::size_t>(joint)].name == bone) node = joint;
+                std::uint32_t slot = 0;
+                if (!slot_of(node, slot)) {
+                    error = "aiming bone '" + aim_name + "' turns '" + bone + "', which is not a bone of the skeleton";
+                    return false;
+                }
+                constraint.turn.push_back({slot, weight});
+            }
+            pendulums.push_back(std::move(constraint));
+        }
+        set_feature_status(feature_status, "aiming_bones", "emitted");
+    }
     // Ragdoll handoff: the dynamic node bodies (named after their nodes, see
     // authored_scene.cpp) form the actor set the ragdoll state creates.
     std::vector<std::uint32_t> ragdoll_actors;
@@ -375,21 +413,85 @@ bool build_glb_resources(const Scene& source, const app::CompileOptions& options
             states.push_back({"rest", rest_animation->name, true});
             dependencies.insert(*rest_animation);
         }
+        // A mask bone covers itself and every bone below it; later entries win.
+        const auto& emitted_skin = emitted_source->skins[selected];
+        const auto emitted_bone_names = canonical_bone_names(emitted_skin);
+        const auto resolve_mask = [&](const PlannedStateMachineState& planned, stingray::DirectEventState& state) {
+            std::map<std::uint32_t, float> weights;
+            for (const auto& [bone, weight] : planned.mask) {
+                const auto named = std::find(emitted_bone_names.begin(), emitted_bone_names.end(), bone);
+                if (named == emitted_bone_names.end()) {
+                    error = "state '" + planned.name + "' masks bone '" + bone + "', which is not in the skeleton";
+                    return false;
+                }
+                const int top = emitted_skin.joints[static_cast<std::size_t>(named - emitted_bone_names.begin())];
+                for (std::size_t slot = 0; slot < emitted_skin.joints.size(); ++slot)
+                    for (int node = emitted_skin.joints[slot]; node >= 0; node = emitted_source->nodes[static_cast<std::size_t>(node)].parent)
+                        if (node == top) { weights[static_cast<std::uint32_t>(slot)] = weight; break; }
+            }
+            state.bone_weights.assign(weights.begin(), weights.end());
+            state.layer = planned.layer;
+            state.empty = planned.empty;
+            state.additive = planned.additive;
+            state.events_at = planned.events_at;
+            state.exit_event = planned.exit_event;
+            state.exit_blend = planned.exit_blend;
+            return true;
+        };
         for (const auto& planned : plan.state_machine_states) {
+            const auto key_of = [&](std::size_t index) {
+                return context.generated_key("animation", base + "_animation_" + std::to_string(index));
+            };
+            if (!planned.blend.empty()) {
+                stingray::DirectEventState state;
+                state.name = planned.name;
+                state.looping = planned.looping;
+                state.blend_variable = planned.blend_variable;
+                state.blend_variable2 = planned.blend_variable2;
+                state.speed = planned.speed;
+                state.speed_variable = planned.speed_variable;
+                state.random = planned.random;
+                state.randomization = planned.randomization;
+                for (const auto& [index, value] : planned.blend) {
+                    if (index >= source.animations.size()) { error = "blend state references an invalid animation"; return false; }
+                    const auto animation_key = key_of(index);
+                    const auto clip = state.blend.size();
+                    state.blend.push_back({animation_key.name, value,
+                                           clip < planned.blend_value2.size() ? planned.blend_value2[clip] : 0.0f});
+                    dependencies.insert(animation_key);
+                }
+                if (!resolve_mask(planned, state)) return false;
+                states.push_back(std::move(state));
+                continue;
+            }
+            if (planned.empty) {
+                stingray::DirectEventState state;
+                state.name = planned.name;
+                state.looping = planned.looping;
+                if (!resolve_mask(planned, state)) return false;
+                states.push_back(std::move(state));
+                continue;
+            }
             if (planned.animation_index >= source.animations.size()) {
                 error = "direct-event state machine plan references an invalid animation";
                 return false;
             }
-            const auto animation_key = context.generated_key("animation",
-                base + "_animation_" + std::to_string(planned.animation_index));
-            states.push_back({planned.name, animation_key.name, planned.looping});
+            const auto animation_key = key_of(planned.animation_index);
+            stingray::DirectEventState state;
+            state.name = planned.name;
+            state.animation_resource_name = animation_key.name;
+            state.looping = planned.looping;
+            state.speed = planned.speed;
+            state.speed_variable = planned.speed_variable;
+            if (!resolve_mask(planned, state)) return false;
+            states.push_back(std::move(state));
             dependencies.insert(animation_key);
         }
         auto transitions = plan.state_machine_transitions;
         if (!plan.ragdoll_event.empty()) {
             const auto ragdoll_state = states.size();
             for (std::size_t from = 0; from < ragdoll_state; ++from)
-                transitions.push_back({from, ragdoll_state, plan.ragdoll_event, 0.0f});
+                if (states[from].layer == 0) transitions.push_back({from, ragdoll_state, plan.ragdoll_event, 0.0f});
             stingray::DirectEventState ragdoll;
             ragdoll.name = "ragdoll";
             ragdoll.ragdoll = true;
