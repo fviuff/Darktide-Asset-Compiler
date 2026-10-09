@@ -27,7 +27,6 @@ from . import particle_effect
 from . import particle_preview
 from . import state_machine_preview
 from . import flow_editor
-from . import pmx
 
 
 SCHEMA_KEY = "darktide_asset"
@@ -1290,6 +1289,49 @@ def _has_constant_emission_output(material):
     return True
 
 
+def _mmd_stand_in(material):
+    """mmd tools materials draw through its own node group, which the glTF exporter can't read. For the export the
+    material gets a Principled BSDF output with the same base texture and colour (cut-out textures alpha clipped,
+    as the game draws them). Returns an undo function, or None when it isn't an mmd tools material."""
+    import numpy as np
+    tree = material.node_tree if material.use_nodes else None
+    output = next((node for node in tree.nodes if node.type == "OUTPUT_MATERIAL" and node.is_active_output),
+                  None) if tree else None
+    surface = output.inputs.get("Surface") if output else None
+    shader = surface.links[0].from_node if surface and surface.is_linked else None
+    if shader is None or shader.type != "GROUP" or not all(
+            shader.inputs.get(name) for name in ("Base Tex", "Diffuse Color", "Alpha")):
+        return None
+    added = [tree.nodes.new("ShaderNodeBsdfPrincipled"), tree.nodes.new("ShaderNodeOutputMaterial")]
+    bsdf, stand_in = added
+    tree.links.new(bsdf.outputs["BSDF"], stand_in.inputs["Surface"])
+    bsdf.inputs["Roughness"].default_value = 0.8
+    texture = shader.inputs["Base Tex"].links[0].from_node if shader.inputs["Base Tex"].is_linked else None
+    if texture is not None and texture.type == "TEX_IMAGE" and texture.image is not None:
+        tree.links.new(texture.outputs["Color"], bsdf.inputs["Base Color"])
+        image = texture.image
+        pixels = np.empty(len(image.pixels), np.float32)
+        image.pixels.foreach_get(pixels)
+        if image.channels == 4 and pixels.size and (pixels[3::4] < 0.5).any():
+            clip = tree.nodes.new("ShaderNodeMath")
+            clip.operation = "ROUND"
+            added.append(clip)
+            tree.links.new(texture.outputs["Alpha"], clip.inputs[0])
+            tree.links.new(clip.outputs[0], bsdf.inputs["Alpha"])
+    else:
+        r, g, b, _ = shader.inputs["Diffuse Color"].default_value
+        bsdf.inputs["Base Color"].default_value = (r, g, b, 1.0)
+        if shader.inputs["Alpha"].default_value < 0.999:
+            bsdf.inputs["Alpha"].default_value = shader.inputs["Alpha"].default_value
+    stand_in.is_active_output = True
+
+    def undo():
+        for node in added:
+            tree.nodes.remove(node)
+        output.is_active_output = True
+    return undo
+
+
 def _apply_modifiers_for_export(objects):
     """Keep Blender's evaluated geometry, except where it would erase morphs."""
     morphs = [obj for obj in objects if obj.type == "MESH" and obj.data and
@@ -1409,6 +1451,7 @@ def export_asset(context, path, donor_path_converter=None):
     changed_objects = []
     changed_materials = []
     backface_culling = []
+    stand_ins = []
     changed_bones = []
     changed_bone_extras = []
     original_selection = [obj for obj in view_objects if obj.select_get()]
@@ -1547,6 +1590,9 @@ def export_asset(context, path, donor_path_converter=None):
                     intent["surface"] = material.dt_material.surface
                 material[MATERIAL_SCHEMA_KEY] = intent
             else:
+                undo = _mmd_stand_in(material)
+                if undo:
+                    stand_ins.append(undo)
                 intent = {"version": 1, "mode": "generated"}
                 if material.dt_material.surface != "default":
                     intent["surface"] = material.dt_material.surface
@@ -1594,6 +1640,8 @@ def export_asset(context, path, donor_path_converter=None):
                 bone[SCHEMA_KEY] = original
         for material, culling in backface_culling:
             material.use_backface_culling = culling
+        for undo in stand_ins:
+            undo()
         for material, original, had_original in changed_materials:
             if not had_original:
                 material.pop(MATERIAL_SCHEMA_KEY, None)
@@ -3023,7 +3071,6 @@ def register():
     flow_editor.register()
     particle_preview.register()
     state_machine_preview.register()
-    pmx.register()
     for cls in CLASSES:
         bpy.utils.register_class(cls)
     bpy.types.Scene.dt_asset = PointerProperty(type=DarktideSceneSettings)
@@ -3045,7 +3092,6 @@ def unregister():
     del bpy.types.Scene.dt_asset
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)
-    pmx.unregister()
     state_machine_preview.unregister()
     particle_preview.unregister()
     flow_editor.unregister()

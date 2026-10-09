@@ -121,16 +121,21 @@ _FULL_WIDTH = str.maketrans("０１２３４５６７８９ＩＫＤＥＸＰＣ
 
 
 def _mmd_english(names):
-    """English words for MMD-named bones (others unchanged): 左腕 -> left upperarm, 右ひざD -> right knee."""
+    """English words for MMD-named bones (others unchanged): 左腕 -> left upperarm, 右ひざD -> right knee. mmd tools
+    renames the sides by default (左腕 -> 腕.L), read the same way."""
     plain = [name.translate(_FULL_WIDTH).strip() for name in names]
     present = set(plain)
     out = []
     for name in plain:
-        side, body = "", name
+        side, body, styled = "", name, (lambda b: b)
         if name[:1] in ("左", "右"):
             side, body = ("left " if name[0] == "左" else "right "), name[1:]
+            styled = (lambda b, s=name[0]: s + b)
         elif name[-1:] in ("左", "右"):
             side, body = ("left " if name[-1] == "左" else "right "), name[:-1]
+        elif re.search(r"[._][LR]$", name):
+            side, body = ("left " if name[-1] == "L" else "right "), name[:-2]
+            styled = (lambda b, s=name[-2:]: b + s)
         body = body.rstrip("_.")
         words = _MMD_WORDS.get(body)
         if words is None and body[:-1] in ("腕捩", "手捩"):          # 腕捩1, 腕捩2 ... twist helpers
@@ -139,7 +144,7 @@ def _mmd_english(names):
             out.append(name)
             continue
         twin = _MMD_D_BONES.get(body)
-        if twin and (name[:1] + twin if side and name[:1] in "左右" else twin) in present:
+        if twin and styled(twin) in present:
             words = "fk ctrl"      # the D bone next to it carries the weights
         out.append(side + words)
     return out

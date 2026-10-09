@@ -318,9 +318,9 @@ The model ends up with the darktide skeleton's proportions, since the game's ani
 
 ### MMD models
 
-MMD models (`.pmx`) open straight in the addon, you don't need mmd tools: file > import > MMD Model (.pmx). Keep the textures where they came with the model (usually a folder next to the .pmx), they get loaded from there. Then it's the same steps as above: select the armature and the mesh, New Asset from Selection, pick human, Auto-map Bones, Fit to Darktide Skeleton, compile.
+For MMD models (`.pmx`) get mmd tools (blender: edit > preferences > get extensions, search "mmd tools", install) and import with file > import > MikuMikuDance Model. Keep the textures where they came with the model (usually a folder next to the .pmx). Leave the import settings as they are. mmd tools makes a few extra objects (rigid bodies, joints), leave those out. Its materials can stay as they are too, the addon takes the texture from them when it compiles. Then it's the same steps as above: select the armature and the mesh, New Asset from Selection, pick human, Auto-map Bones, Fit to Darktide Skeleton, compile.
 
-Auto-map reads the japanese bone names MMD uses (下半身, 上半身, 左腕, 左ひじ, 左足...) and the english ones from cats or mmd tools (Left arm, Left elbow, Thumb0_L...). The leg "D" bones some models have (左足D...) carry the leg weights, so those get paired instead of the plain leg bones. IK, twist and the other helper bones stay out, they just follow along. MMD physics (hair and skirt rigid bodies) isn't taken along, so hair and skirts are stiff. Morphs come in as shape keys and get baked like any shape key.
+Auto-map reads the japanese bone names MMD uses (下半身, 上半身, 左腕, 左ひじ, 左足...), the way mmd tools renames them by default (腕.L, ひじ.L...) and the english ones from cats or mmd tools (Left arm, Left elbow, Thumb0_L...), so you don't have to change any import settings. The leg "D" bones some models have (左足D...) carry the leg weights, so those get paired instead of the plain leg bones. IK, twist and the other helper bones stay out, they just follow along. MMD physics (the hair and skirt rigid bodies) isn't taken along, so hair and skirts are stiff. Morphs come in as shape keys and get baked like any shape key.
 
 A model that got converted to a mesh without a skeleton (some online converters do that) can't be fitted, get the .pmx.
 
