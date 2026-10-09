@@ -348,7 +348,10 @@ bool write_build_manifest(const ResourceGraph& graph, const SerializedResources&
          << ",\"name\":" << quote(metadata.target_profile.name)
          << ",\"unit_version\":" << metadata.target_profile.unit_version
          << ",\"material_version\":" << metadata.target_profile.material_version
-         << "},\n  \"roots\":[";
+         << '}';
+    if (!metadata.package_name.empty())
+        json << ",\n  \"package\":{\"key\":{\"type\":\"package\",\"name\":" << quote(metadata.package_name) << "}}";
+    json << ",\n  \"roots\":[";
     bool first = true;
     for (const auto& root : graph.roots) { if (!first) json << ','; first = false; json << key_json(root); }
     json << "],\n  \"artifacts\":[";

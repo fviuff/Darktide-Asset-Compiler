@@ -29,6 +29,9 @@ struct PhysicsActor {
     float mass = 0.0f; bool enabled = true; std::vector<PhysicsShape> shapes;
 };
 
+// A physics_properties template name as its id32; "#xxxxxxxx" is a raw id32.
+std::uint32_t template_id32(const std::string& name);
+
 // Serialized shape-template id32. The global "default" template has an empty
 // collides-with mask: retail uses it for static and keyframed shapes, where the
 // other body's mask provides the contact. A simulated body on "default" collides

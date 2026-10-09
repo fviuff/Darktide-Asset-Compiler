@@ -3,6 +3,8 @@
 #ifdef DTGLB_HAS_PHYSICS_COLLECTIONS
 #include "stingray/physics/physics_scene.h"
 
+#include <cmath>
+#include <limits>
 #include <unordered_map>
 
 namespace dtglb::stingray::physics {
@@ -52,23 +54,49 @@ bool build_authored_physics_scene(const Scene& scene,
             error = "authored physics body frame must be rigid: " + definition.id;
             return false;
         }
-        // Reuse the compound collider builder, including instance grouping and
-        // dynamic geometry-to-convex cooking, in this body's local frame.
-        Scene local_scene;
-        local_scene.asset_definition.body = definition;
+        // Reuse the compound collider builder, including instance grouping and dynamic geometry-to-convex cooking.
+        // Meshes are taken in this body's frame; a box, sphere or capsule is fitted in its own object's frame (as the
+        // Stingray physics compiler fits one to a mesh object) and placed in the body from there.
+        CollectionBody body;
+        const auto& name = node.name.empty() ? definition.id : node.name;
+        bool first_collider = true;
         for (const auto& collider : scene.asset_definition.colliders) {
             if (collider.body != definition.id) continue;
+            const bool fitted = collider.shape == ColliderShape::Box || collider.shape == ColliderShape::Sphere ||
+                                collider.shape == ColliderShape::Capsule;
+            Matrix4 frame = node.world_stingray;
+            if (fitted) {
+                frame = scene.nodes[static_cast<std::size_t>(collider.source_node)].world_stingray;
+                for (int axis = 0; axis < 3; ++axis) {
+                    const float length = std::sqrt(frame[axis * 4] * frame[axis * 4] + frame[axis * 4 + 1] * frame[axis * 4 + 1] +
+                                                   frame[axis * 4 + 2] * frame[axis * 4 + 2]);
+                    if (!(length > 1e-8f)) { error = "collider '" + collider.id + "' has a zero scale"; return false; }
+                    for (int row = 0; row < 3; ++row) frame[axis * 4 + row] /= length;
+                }
+            }
+            Scene local_scene;
+            local_scene.asset_definition.body = definition;
             local_scene.asset_definition.colliders.push_back(collider);
             for (const auto& primitive : scene.collider_primitives) {
                 if (primitive.collision_object != collider.source_node) continue;
                 Primitive local;
-                if (!localize_rigid_primitive(primitive, node.world_stingray, local, error)) return false;
+                if (!localize_rigid_primitive(primitive, frame, local, error)) return false;
                 local_scene.collider_primitives.push_back(std::move(local));
             }
+            PhysicsActor part;
+            if (!build_authored_actor(local_scene, name, hashes[index], part, error)) return false;
+            if (fitted) {
+                const Matrix4 placement = multiply(inverse, frame);
+                for (auto& shape : part.shapes) shape.local_transform = multiply(placement, shape.local_transform);
+            }
+            if (first_collider) {
+                body.actor = std::move(part);
+                first_collider = false;
+            } else {
+                for (auto& shape : part.shapes) body.actor.shapes.push_back(std::move(shape));
+            }
         }
-        CollectionBody body;
-        const auto& name = node.name.empty() ? definition.id : node.name;
-        if (!build_authored_actor(local_scene, name, hashes[index], body.actor, error)) return false;
+        if (first_collider) { error = "authored physics body '" + definition.id + "' has no collider"; return false; }
         // Retail names each body after its node; ragdoll actor sets look bodies up by that name.
         body.actor.name_hash = hashes[index];
         std::vector<std::uint8_t> record;
@@ -144,6 +172,15 @@ bool build_authored_physics_scene(const Scene& scene,
             joint.twist_upper = definition.twist_max.value_or(0.78539816339f);
             joint.swing_y = definition.swing_y;
             joint.swing_z = definition.swing_z;
+            // a range of 0 locks that axis (the game's knees and elbows bend one way only); PhysX still wants a
+            // valid cone, like the game's own locked joints carry
+            if (joint.twist_lower == joint.twist_upper) {
+                joint.motion[3] = CollectionMotion::Locked;
+                joint.twist_lower = -0.78539816339f;
+                joint.twist_upper = 0.78539816339f;
+            }
+            if (!(joint.swing_y > 0.0f)) { joint.motion[4] = CollectionMotion::Locked; joint.swing_y = std::numeric_limits<float>::min(); }
+            if (!(joint.swing_z > 0.0f)) { joint.motion[5] = CollectionMotion::Locked; joint.swing_z = std::numeric_limits<float>::min(); }
             joint.drive = CollectionJoint::Drive::SwingTwist;
             break;
         }

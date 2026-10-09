@@ -1,0 +1,3144 @@
+{
+ "attack_valkyrie": {
+  "base_unit": "content/characters/enemy/valkyrie/third_person/attack_valkyrie",
+  "health": [
+   1000.0,
+   1250.0,
+   1500.0,
+   2000.0,
+   2500.0
+  ],
+  "hit_zones": {
+   "center_mass": []
+  },
+  "run_speed": 2.5,
+  "walk_speed": 2.5
+ },
+ "chaos_armored_hound": {
+  "base_unit": "content/characters/enemy/chaos_hound/third_person/base",
+  "health": [
+   935.0,
+   1100.0,
+   1375.0,
+   1650.0,
+   2200.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_spine",
+    "c_spine1",
+    "c_spine2"
+   ],
+   "head": [
+    "c_head",
+    "c_neck",
+    "c_neck1"
+   ],
+   "hound_tail": [
+    "c_hips"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand",
+    "c_leftfingerbase"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot",
+    "c_lefttoebase"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand",
+    "c_rightfingerbase"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot",
+    "c_righttoebase"
+   ],
+   "torso": [
+    "c_spine",
+    "c_spine1",
+    "c_spine2"
+   ],
+   "upper_left_arm": [
+    "c_leftarm"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 6.0,
+  "walk_speed": 2.3
+ },
+ "chaos_armored_infected": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard/third_person/base",
+  "health": [
+   250.0,
+   312.5,
+   375.0,
+   500.0,
+   625.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 5.159999999999999,
+  "walk_speed": 2.4
+ },
+ "chaos_beast_of_nurgle": {
+  "base_unit": "content/characters/enemy/chaos_beast_of_nurgle/third_person/base",
+  "health": [
+   17500.0,
+   21875.0,
+   26250.0,
+   35000.0,
+   52500.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_gut",
+    "c_spine",
+    "c_spine1"
+   ],
+   "head": [
+    "c_neck",
+    "c_head"
+   ],
+   "lower_left_arm": [
+    "c_leftarmspline04",
+    "c_leftarmspline05",
+    "c_leftarmspline06",
+    "c_lefthand"
+   ],
+   "lower_right_arm": [
+    "c_rightarmspline04",
+    "c_rightarmspline05",
+    "c_rightarmspline06",
+    "c_righthand"
+   ],
+   "lower_tail": [
+    "c_tail_anim_05",
+    "c_tail_anim_06",
+    "c_tail_anim_07",
+    "c_tail_anim_08"
+   ],
+   "tongue": [
+    "c_tonguespline_start",
+    "c_tonguespline01",
+    "c_tonguespline02",
+    "c_tonguespline03",
+    "c_tonguespline04",
+    "c_tonguespline05",
+    "c_tonguespline06",
+    "c_tonguespline_end"
+   ],
+   "upper_left_arm": [
+    "c_leftshoulder",
+    "c_leftarmspline01",
+    "c_leftarmspline02",
+    "c_leftarmspline03"
+   ],
+   "upper_right_arm": [
+    "c_rightshoulder",
+    "c_rightarmspline01",
+    "c_rightarmspline02",
+    "c_rightarmspline03"
+   ],
+   "upper_tail": [
+    "c_tail_anim_01",
+    "c_tail_anim_02",
+    "c_tail_anim_03",
+    "c_tail_anim_04"
+   ],
+   "weakspot": [
+    "c_weakspot"
+   ]
+  },
+  "run_speed": 3.9,
+  "walk_speed": 2.0
+ },
+ "chaos_daemonhost": {
+  "base_unit": "content/characters/enemy/chaos_daemonhost_witch/third_person/base",
+  "health": [
+   16000.0,
+   20000.0,
+   24000.0,
+   32000.0,
+   40000.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1",
+    "c_spine2"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 6.2,
+  "walk_speed": 1.9
+ },
+ "chaos_daemonhost_torment": {
+  "base_unit": "content/characters/enemy/live_event/live_event_torment/live_event_torment_chaos_daemonhost_witch",
+  "health": [
+   50000.0,
+   62500.0,
+   75000.0,
+   107500.0,
+   131067.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1",
+    "c_spine2"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 6.2,
+  "walk_speed": 1.9
+ },
+ "chaos_hound": {
+  "base_unit": "content/characters/enemy/chaos_hound/third_person/base",
+  "health": [
+   595.0,
+   700.0,
+   875.0,
+   1050.0,
+   1400.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_spine",
+    "c_spine1",
+    "c_spine2"
+   ],
+   "head": [
+    "c_head",
+    "c_neck",
+    "c_neck1"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand",
+    "c_leftfingerbase"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot",
+    "c_lefttoebase"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand",
+    "c_rightfingerbase"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot",
+    "c_righttoebase"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1",
+    "c_spine2"
+   ],
+   "upper_left_arm": [
+    "c_leftarm"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 6.0,
+  "walk_speed": 6.0
+ },
+ "chaos_lesser_mutated_poxwalker": {
+  "base_unit": "content/characters/enemy/chaos_poxwalker/third_person/base",
+  "health": [
+   160.0,
+   200.0,
+   240.0,
+   320.0,
+   400.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine1"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine1",
+    "c_spine2",
+    "c_leftshoulder",
+    "c_rightshoulder"
+   ],
+   "upper_left_arm": [
+    "c_leftarm"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 3.5,
+  "walk_speed": 2.3
+ },
+ "chaos_mutated_poxwalker": {
+  "base_unit": "content/characters/enemy/chaos_poxwalker/third_person/base_tentacle",
+  "health": [
+   180.0,
+   225.0,
+   270.0,
+   360.0,
+   450.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine1"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "tentacle": [
+    "c_leftshoulder"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine1",
+    "c_spine2",
+    "c_rightshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 3.5,
+  "walk_speed": 2.3
+ },
+ "chaos_mutator_daemonhost": {
+  "base_unit": "content/characters/enemy/chaos_daemonhost_witch/third_person/base",
+  "health": [
+   16000.0,
+   20000.0,
+   24000.0,
+   32000.0,
+   40000.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1",
+    "c_spine2"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 6.2,
+  "walk_speed": 1.9
+ },
+ "chaos_mutator_ritualist": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard/third_person/base",
+  "health": [
+   1000.0,
+   1250.0,
+   1500.0,
+   2000.0,
+   2500.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1",
+    "c_neck"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 5.6,
+  "walk_speed": 2.3
+ },
+ "chaos_newly_infected": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard/third_person/base",
+  "health": [
+   120.0,
+   150.0,
+   180.0,
+   240.0,
+   300.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 5.159999999999999,
+  "walk_speed": 2.4
+ },
+ "chaos_ogryn_bulwark": {
+  "base_unit": "content/characters/enemy/chaos_ogryn/third_person/base",
+  "health": [
+   1800.0,
+   2400.0,
+   3000.0,
+   3600.0,
+   4800.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "shield": [
+    "c_shield"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1",
+    "c_spine2"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 5.6,
+  "walk_speed": 1.9
+ },
+ "chaos_ogryn_executor": {
+  "base_unit": "content/characters/enemy/chaos_ogryn/third_person/base",
+  "health": [
+   1350.0,
+   2250.0,
+   2700.0,
+   4875.0,
+   6500.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1",
+    "c_spine2"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 5.25,
+  "walk_speed": 2.0
+ },
+ "chaos_ogryn_gunner": {
+  "base_unit": "content/characters/enemy/chaos_ogryn/third_person/base",
+  "health": [
+   1500.0,
+   2000.0,
+   2500.0,
+   3000.0,
+   4000.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "right_shoulderguard": [
+    "c_rightshoulderguard"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1",
+    "c_spine2"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 6.2,
+  "walk_speed": 1.9
+ },
+ "chaos_ogryn_houndmaster": {
+  "base_unit": "content/characters/enemy/chaos_ogryn/third_person/base",
+  "health": [
+   22000.0,
+   27500.0,
+   33000.0,
+   44000.0,
+   66000.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "canister": [
+    "c_canister"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1",
+    "c_spine2"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 6.0,
+  "walk_speed": 2.0
+ },
+ "chaos_plague_ogryn": {
+  "base_unit": "content/characters/enemy/chaos_plague_ogryn/third_person/base",
+  "health": [
+   20000.0,
+   25000.0,
+   30000.0,
+   40000.0,
+   60000.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_spine",
+    "c_spine1"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1"
+   ],
+   "upper_left_arm": [
+    "c_leftarm"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 6.0,
+  "walk_speed": 6.0
+ },
+ "chaos_poxwalker": {
+  "base_unit": "content/characters/enemy/chaos_poxwalker/third_person/base",
+  "health": [
+   150.0,
+   187.5,
+   225.0,
+   300.0,
+   375.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine1"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine1",
+    "c_spine2",
+    "c_leftshoulder",
+    "c_rightshoulder"
+   ],
+   "upper_left_arm": [
+    "c_leftarm"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 3.5,
+  "walk_speed": 2.3
+ },
+ "chaos_poxwalker_bomber": {
+  "base_unit": "content/characters/enemy/chaos_poxwalker_bomber/third_person/base",
+  "health": [
+   595.0,
+   700.0,
+   875.0,
+   1050.0,
+   1400.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine",
+    "c_spine1"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1",
+    "c_spine2"
+   ],
+   "upper_left_arm": [
+    "c_leftarm"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 5.0,
+  "walk_speed": 2.0
+ },
+ "chaos_spawn": {
+  "base_unit": "content/characters/enemy/chaos_spawn/third_person/base",
+  "health": [
+   15750.0,
+   19687.5,
+   23625.0,
+   31500.0,
+   47250.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_spine",
+    "c_spine1",
+    "c_leftarmB",
+    "c_leftshoulder",
+    "c_tentacleC1",
+    "c_tentacleC2",
+    "c_leftfinger4_jnt",
+    "c_leftfinger5_jnt",
+    "c_leftfinger3_jnt",
+    "c_neck2",
+    "c_leftforearmB",
+    "c_tentacleC3",
+    "c_smallTentacleE3",
+    "c_smallTentacleE2",
+    "c_smallTentacleE1",
+    "c_smallTentacleA1",
+    "c_smallTentacleA2",
+    "c_smallTentacleA3",
+    "c_lefthandA",
+    "c_smallTentacleB1",
+    "c_smallTentacleB2",
+    "c_smallTentacleB3",
+    "c_smallTentacleC3",
+    "c_tentacleC4",
+    "c_smallTentacleD1",
+    "c_tentacleB2",
+    "c_rightshoulder",
+    "c_tentacleD1",
+    "c_smallTentacleD2",
+    "c_tentacleB4",
+    "c_tentacleB3",
+    "c_leftarmA",
+    "c_leftforearmA",
+    "c_lefttoebase",
+    "c_leftfinger1_jnt",
+    "c_leftfinger2_jnt",
+    "c_tentacleD2",
+    "c_tentacleD3",
+    "c_smallTentacleC1",
+    "c_smallTentacleC2"
+   ],
+   "head": [
+    "c_head",
+    "c_neck1"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1"
+   ],
+   "upper_left_arm": [
+    "c_leftarm"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 6.0,
+  "walk_speed": 6.0
+ },
+ "cultist_assault": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard/third_person/base",
+  "health": [
+   200.0,
+   250.0,
+   300.0,
+   400.0,
+   500.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 5.5,
+  "walk_speed": 2.3
+ },
+ "cultist_berzerker": {
+  "base_unit": "content/characters/enemy/chaos_cultist_melee_elite/third_person/base",
+  "health": [
+   750.0,
+   1000.0,
+   1250.0,
+   1500.0,
+   2000.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1",
+    "c_spine_misc_01",
+    "c_spine_misc_02"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder",
+    "c_leftshoulder_misc_01",
+    "c_leftshoulder_misc_02",
+    "c_leftarm_misc_01"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder",
+    "c_rightshoulder_misc_01",
+    "c_rightshoulder_misc_02"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 6.2,
+  "walk_speed": 2.3
+ },
+ "cultist_captain": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard_captain/third_person/base",
+  "health": [
+   14000.0,
+   17500.0,
+   21000.0,
+   40000.0,
+   50000.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "captain_void_shield": [
+    "c_captain_void_shield"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 5.9,
+  "walk_speed": 2.5
+ },
+ "cultist_flamer": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard/third_person/flamer_base",
+  "health": [
+   595.0,
+   700.0,
+   875.0,
+   1050.0,
+   1400.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "backpack": [
+    "c_renegadeflamethrowertanks"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 5.5,
+  "walk_speed": 2.3
+ },
+ "cultist_grenadier": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard/third_person/base",
+  "health": [
+   425.0,
+   500.0,
+   625.0,
+   750.0,
+   1000.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 4.8,
+  "walk_speed": 2.3
+ },
+ "cultist_gunner": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard/third_person/base",
+  "health": [
+   525.0,
+   700.0,
+   875.0,
+   1050.0,
+   1400.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 5.5,
+  "walk_speed": 2.3
+ },
+ "cultist_melee": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard/third_person/base",
+  "health": [
+   275.0,
+   343.75,
+   412.5,
+   550.0,
+   687.5
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1",
+    "c_neck"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 5.6,
+  "walk_speed": 2.3
+ },
+ "cultist_mutant": {
+  "base_unit": "content/characters/enemy/chaos_mutant_charger/third_person/base",
+  "health": [
+   1700.0,
+   2000.0,
+   2500.0,
+   3000.0,
+   4000.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand1"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_lefttoebase"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1",
+    "c_spine2",
+    "c_spine2_misc_01",
+    "c_spine2_misc_02"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder",
+    "c_leftarm_misc"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder",
+    "c_rightshoulder_misc_01",
+    "c_rightshoulder_misc_02",
+    "c_rightarm_misc"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 6.0,
+  "walk_speed": 2.3
+ },
+ "cultist_mutant_mutator": {
+  "base_unit": "content/characters/enemy/chaos_mutant_charger/third_person/base",
+  "health": [
+   850.0,
+   1000.0,
+   1250.0,
+   1500.0,
+   2000.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand1"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_lefttoebase"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1",
+    "c_spine2",
+    "c_spine2_misc_01",
+    "c_spine2_misc_02"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder",
+    "c_leftarm_misc"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder",
+    "c_rightshoulder_misc_01",
+    "c_rightshoulder_misc_02",
+    "c_rightarm_misc"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 6.0,
+  "walk_speed": 2.3
+ },
+ "cultist_ritualist": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard/third_person/base",
+  "health": [
+   1000.0,
+   1250.0,
+   1500.0,
+   2000.0,
+   2500.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1",
+    "c_neck"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 5.6,
+  "walk_speed": 2.3
+ },
+ "cultist_shocktrooper": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard/third_person/base",
+  "health": [
+   375.0,
+   500.0,
+   625.0,
+   750.0,
+   1000.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 5.6,
+  "walk_speed": 2.3
+ },
+ "cultist_vanguard": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard/third_person/base",
+  "health": [
+   650.0,
+   800.0,
+   1000.0,
+   1200.0,
+   1800.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "shield": [
+    "c_shield"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1",
+    "c_neck"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 5.6,
+  "walk_speed": 2.3
+ },
+ "renegade_assault": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard/third_person/base",
+  "health": [
+   180.0,
+   225.0,
+   270.0,
+   500.0,
+   625.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 5.5,
+  "walk_speed": 2.3
+ },
+ "renegade_berzerker": {
+  "base_unit": "content/characters/enemy/chaos_cultist_melee_elite/third_person/base",
+  "health": [
+   850.0,
+   1000.0,
+   1250.0,
+   1875.0,
+   2500.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1",
+    "c_spine_misc_01",
+    "c_spine_misc_02"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder",
+    "c_leftshoulder_misc_01",
+    "c_leftshoulder_misc_02",
+    "c_leftarm_misc_01"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder",
+    "c_rightshoulder_misc_01",
+    "c_rightshoulder_misc_02"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 6.2,
+  "walk_speed": 2.3
+ },
+ "renegade_captain": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard_captain/third_person/base",
+  "health": [
+   16000.0,
+   20000.0,
+   24000.0,
+   40000.0,
+   50000.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "captain_void_shield": [
+    "c_captain_void_shield"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 5.9,
+  "walk_speed": 2.5
+ },
+ "renegade_executor": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard/third_person/base",
+  "health": [
+   1250.0,
+   1500.0,
+   1875.0,
+   2775.0,
+   3700.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 5.25,
+  "walk_speed": 2.0
+ },
+ "renegade_flamer": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard/third_person/flamer_base",
+  "health": [
+   595.0,
+   700.0,
+   875.0,
+   1050.0,
+   1400.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "backpack": [
+    "c_renegadeflamethrowertanks"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 5.5,
+  "walk_speed": 2.3
+ },
+ "renegade_flamer_mutator": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard/third_person/base",
+  "health": [
+   595.0,
+   700.0,
+   875.0,
+   1050.0,
+   1400.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 5.5,
+  "walk_speed": 2.3
+ },
+ "renegade_grenadier": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard/third_person/base",
+  "health": [
+   318.75,
+   375.0,
+   468.75,
+   562.5,
+   750.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 4.8,
+  "walk_speed": 2.3
+ },
+ "renegade_gunner": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard/third_person/base",
+  "health": [
+   450.0,
+   600.0,
+   900.0,
+   1275.0,
+   1700.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 5.5,
+  "walk_speed": 2.3
+ },
+ "renegade_melee": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard/third_person/base",
+  "health": [
+   250.0,
+   313.0,
+   375.0,
+   650.0,
+   815.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1",
+    "c_neck"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 5.6,
+  "walk_speed": 2.3
+ },
+ "renegade_netgunner": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard/third_person/base",
+  "health": [
+   382.5,
+   450.0,
+   562.5,
+   675.0,
+   900.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 5.2,
+  "walk_speed": 2.3
+ },
+ "renegade_plasma_gunner": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard/third_person/base",
+  "health": [
+   675.0,
+   900.0,
+   1125.0,
+   1350.0,
+   1800.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 5.6,
+  "walk_speed": 2.3
+ },
+ "renegade_radio_operator": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard/third_person/base",
+  "health": [
+   750.0,
+   1000.0,
+   1250.0,
+   1500.0,
+   2000.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 5.5,
+  "walk_speed": 2.3
+ },
+ "renegade_rifleman": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard/third_person/base",
+  "health": [
+   150.0,
+   188.0,
+   225.0,
+   400.0,
+   500.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 4.8,
+  "walk_speed": 2.3
+ },
+ "renegade_shocktrooper": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard/third_person/base",
+  "health": [
+   350.0,
+   500.0,
+   625.0,
+   1125.0,
+   1500.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 5.6,
+  "walk_speed": 2.3
+ },
+ "renegade_sniper": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard/third_person/base",
+  "health": [
+   212.5,
+   250.0,
+   312.5,
+   375.0,
+   500.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 4.8,
+  "walk_speed": 2.3
+ },
+ "renegade_twin_captain": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard_captain/third_person/base",
+  "health": [
+   24000.0,
+   30000.0,
+   36000.0,
+   48000.0,
+   72000.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "captain_void_shield": [
+    "c_captain_void_shield"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 4.8,
+  "walk_speed": 2.3
+ },
+ "renegade_twin_captain_two": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard_captain/third_person/base",
+  "health": [
+   24000.0,
+   30000.0,
+   36000.0,
+   48000.0,
+   72000.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "captain_void_shield": [
+    "c_captain_void_shield"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 6.72,
+  "walk_speed": 4.8
+ },
+ "renegade_vanguard": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard/third_person/base",
+  "health": [
+   750.0,
+   930.0,
+   1100.0,
+   1300.0,
+   1900.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "shield": [
+    "c_shield"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1",
+    "c_neck"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 5.6,
+  "walk_speed": 2.3
+ },
+ "renegade_wizard": {
+  "base_unit": "content/characters/enemy/chaos_traitor_guard_captain/third_person/base",
+  "health": [
+   45000.0,
+   55000.0,
+   75000.0,
+   100000.0,
+   150000.0
+  ],
+  "hit_zones": {
+   "afro": [
+    "r_afro"
+   ],
+   "captain_void_shield": [
+    "c_captain_void_shield"
+   ],
+   "center_mass": [
+    "c_hips",
+    "c_spine"
+   ],
+   "head": [
+    "c_head",
+    "c_neck"
+   ],
+   "lower_left_arm": [
+    "c_leftforearm",
+    "c_lefthand"
+   ],
+   "lower_left_leg": [
+    "c_leftleg",
+    "c_leftfoot"
+   ],
+   "lower_right_arm": [
+    "c_rightforearm",
+    "c_righthand"
+   ],
+   "lower_right_leg": [
+    "c_rightleg",
+    "c_rightfoot"
+   ],
+   "torso": [
+    "c_hips",
+    "c_spine",
+    "c_spine1"
+   ],
+   "upper_left_arm": [
+    "c_leftarm",
+    "c_leftshoulder"
+   ],
+   "upper_left_leg": [
+    "c_leftupleg"
+   ],
+   "upper_right_arm": [
+    "c_rightarm",
+    "c_rightshoulder"
+   ],
+   "upper_right_leg": [
+    "c_rightupleg"
+   ]
+  },
+  "run_speed": 4.8,
+  "walk_speed": 2.3
+ }
+}

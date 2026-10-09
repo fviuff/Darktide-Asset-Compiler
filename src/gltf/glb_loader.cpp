@@ -308,7 +308,7 @@ void populate_asset_definition(const cgltf_data* data, Scene& out) {
         const auto payload = authored_payload(data, data->nodes[index].extras);
         if (!payload) continue;
         const auto location = "node[" + std::to_string(index) + "].darktide_asset";
-        const auto members = authored_members(*payload, location, {"version", "id", "body", "collider", "joint", "visibility_group", "dangle", "aim", "particles", "lod", "render", "light", "flow", "data"});
+        const auto members = authored_members(*payload, location, {"version", "id", "body", "collider", "joint", "visibility_group", "dangle", "aim", "particles", "lod", "render", "light", "flow", "data", "actor", "mover"});
         if (const auto record = members.find("data"); record != members.end()) {
             // the unit's script data (Unit.get_data), a JSON object or a string holding it
             if (!out.asset_definition.script_data.empty()) throw std::runtime_error(location + ".data: only one object may carry the unit data");
@@ -330,6 +330,43 @@ void populate_asset_definition(const cgltf_data* data, Scene& out) {
             } else {
                 out.asset_definition.flow = std::string(text);
             }
+        }
+        if (const auto record = members.find("actor"); record != members.end()) {
+            const auto where = location + ".actor";
+            const auto fields = authored_members(record->second, where, {"name", "template", "shape_template", "material", "shape", "spawn"});
+            NodeActorDefinition actor;
+            actor.source_node = index;
+            const auto* node_name = data->nodes[index].name;
+            actor.name = authored_string(fields, "name", where, node_name ? node_name : "");
+            actor.actor_template = authored_string(fields, "template", where, "keyframed");
+            actor.shape_template = authored_string(fields, "shape_template", where, "default");
+            actor.material = authored_string(fields, "material", where, "default");
+            const auto shape = authored_string(fields, "shape", where, "capsule");
+            if (shape == "capsule") actor.shape = ColliderShape::Capsule;
+            else if (shape == "sphere") actor.shape = ColliderShape::Sphere;
+            else if (shape == "box") actor.shape = ColliderShape::Box;
+            else if (shape == "convex") actor.shape = ColliderShape::Convex;
+            else if (shape == "geometry") actor.shape = ColliderShape::Geometry;
+            else throw std::runtime_error(where + ".shape must be capsule, sphere, box, convex or geometry");
+            if (const auto spawn = fields.find("spawn"); spawn != fields.end()) {
+                if (spawn->second != "true" && spawn->second != "false") throw std::runtime_error(where + ".spawn must be true or false");
+                actor.spawn = spawn->second == "true";
+            }
+            out.asset_definition.node_actors.push_back(std::move(actor));
+        }
+        if (const auto record = members.find("mover"); record != members.end()) {
+            const auto where = location + ".mover";
+            const auto fields = authored_members(record->second, where, {"name", "height", "radius", "slope_limit", "collision_filter"});
+            MoverDefinition mover;
+            mover.name = authored_string(fields, "name", where, "mover");
+            mover.collision_filter = authored_string(fields, "collision_filter", where, mover.collision_filter.c_str());
+            const auto number = [&](const char* key, float& target) {
+                if (const auto it = fields.find(key); it != fields.end()) target = authored_number(it->second, where + "." + key);
+            };
+            number("height", mover.height); number("radius", mover.radius); number("slope_limit", mover.slope_limit);
+            if (!(mover.radius > 0.0f) || !(mover.height > 0.0f) || mover.slope_limit < 0.0f)
+                throw std::runtime_error(where + ": height and radius must be above 0");
+            out.asset_definition.movers.push_back(std::move(mover));
         }
         if (const auto record = members.find("render"); record != members.end()) {
             const auto where = location + ".render";

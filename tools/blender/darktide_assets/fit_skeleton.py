@@ -17,6 +17,7 @@ from mathutils import Matrix, Vector
 from bpy.props import CollectionProperty, EnumProperty, IntProperty, StringProperty
 
 from .reference_skeleton import ReferenceSkeletonError, load_reference
+from .skeleton_presets import STARTER_PRESETS
 
 
 # --------------------------------------------------------------------------------------
@@ -82,7 +83,7 @@ _COMPOUNDS = {("upper", "arm"): "upperarm", ("lower", "arm"): "lowerarm", ("fore
 _EXCLUDE = {"twist", "roll", "jiggle", "cloth", "skirt", "cape", "hair", "ik", "pole", "ctrl", "control",
             "helper", "hlp", "end", "nub", "tip", "prop", "prp", "weapon", "effect", "fx", "mvm", "medal",
             "dyn", "phys", "corrective", "jaw", "eye", "eyes", "eyelid", "lid", "brow", "lip", "lips",
-            "cheek", "ear", "tongue", "teeth", "nose", "twistroll", "bulge", "fk"}
+            "cheek", "ear", "tongue", "teeth", "nose", "twistroll", "bulge", "fk", "mouth", "chin", "face"}
 _ARM = {"clavicle": 0, "collar": 0, "collarbone": 0, "shoulder": 0, "scapula": 0,
         "upperarm": 1, "uparm": 1, "humerus": 1,
         "forearm": 2, "lowerarm": 2, "loarm": 2, "elbow": 2, "radius": 2,
@@ -96,6 +97,52 @@ _FINGER_ORDER = ("thumb", "index", "middle", "ring", "pinky")
 _SPINE = {"spine", "back", "chest", "abdomen", "torso", "waist", "belly"}
 _ARM_LADDER = ("shoulder", "arm", "forearm", "hand")
 _LEG_LADDER = ("upleg", "leg", "foot", "toebase")
+
+
+# MMD's standard bone names (Japanese) in the words the rules below read. Controls without weights (center, groove,
+# waist, IK, shoulder P/C, dummy, twist) get a word the rules leave out; "D" leg bones carry the leg weights in models
+# that have them, so the plain leg bones are left out there (see _mmd_english).
+_MMD_WORDS = {
+    "全ての親": "root ctrl", "センター": "center ctrl", "センター2": "center ctrl", "グルーブ": "groove ctrl",
+    "腰": "waist ctrl", "腰キャンセル": "waist ctrl", "下半身": "hips", "上半身": "spine", "上半身1": "spine",
+    "上半身2": "chest", "上半身3": "chest", "首": "neck", "頭": "head", "両目": "eyes", "目": "eye",
+    "肩": "shoulder", "肩P": "shoulder ctrl", "肩C": "shoulder ctrl", "腕": "upperarm", "腕捩": "upperarm twist",
+    "ひじ": "elbow", "手捩": "forearm twist", "手首": "wrist", "ダミー": "dummy ctrl",
+    "親指0": "thumb finger 0", "親指1": "thumb finger 1", "親指2": "thumb finger 2",
+    "人指1": "index finger 1", "人指2": "index finger 2", "人指3": "index finger 3",
+    "中指1": "middle finger 1", "中指2": "middle finger 2", "中指3": "middle finger 3",
+    "薬指1": "ring finger 1", "薬指2": "ring finger 2", "薬指3": "ring finger 3",
+    "小指1": "little finger 1", "小指2": "little finger 2", "小指3": "little finger 3",
+    "足": "thigh", "ひざ": "knee", "足首": "ankle", "つま先": "toe", "足D": "thigh", "ひざD": "knee",
+    "足首D": "ankle", "足先EX": "toe", "足IK": "leg ik", "つま先IK": "toe ik",
+}
+_MMD_D_BONES = {"足": "足D", "ひざ": "ひざD", "足首": "足首D", "つま先": "足先EX"}
+_FULL_WIDTH = str.maketrans("０１２３４５６７８９ＩＫＤＥＸＰＣ", "0123456789IKDEXPC")
+
+
+def _mmd_english(names):
+    """English words for MMD-named bones (others unchanged): 左腕 -> left upperarm, 右ひざD -> right knee."""
+    plain = [name.translate(_FULL_WIDTH).strip() for name in names]
+    present = set(plain)
+    out = []
+    for name in plain:
+        side, body = "", name
+        if name[:1] in ("左", "右"):
+            side, body = ("left " if name[0] == "左" else "right "), name[1:]
+        elif name[-1:] in ("左", "右"):
+            side, body = ("left " if name[-1] == "左" else "right "), name[:-1]
+        body = body.rstrip("_.")
+        words = _MMD_WORDS.get(body)
+        if words is None and body[:-1] in ("腕捩", "手捩"):          # 腕捩1, 腕捩2 ... twist helpers
+            words = _MMD_WORDS[body[:-1]]
+        if words is None:
+            out.append(name)
+            continue
+        twin = _MMD_D_BONES.get(body)
+        if twin and (name[:1] + twin if side and name[:1] in "左右" else twin) in present:
+            words = "fk ctrl"      # the D bone next to it carries the weights
+        out.append(side + words)
+    return out
 
 
 def _tokens(name):
@@ -241,7 +288,7 @@ def auto_map_bones(bones, ref_names, positions=None):
         while j >= 0:
             depth[i] += 1
             j = parent[j]
-    toks = [_tokens(b[0]) for b in bones]
+    toks = [_tokens(name) for name in _mmd_english([b[0] for b in bones])]
     excluded = [bool(set(t) & _EXCLUDE) for t in toks]
     ref = set(ref_names)
     assigned, used = {}, set()
@@ -266,11 +313,22 @@ def auto_map_bones(bones, ref_names, positions=None):
     side = [next((_SIDE_TOKENS[t] for t in tk if t in _SIDE_TOKENS), None) for tk in toks]
     family = [None] * count   # (kind, explicit rank or None)
     finger = [None] * count   # (finger key or ("group", digit))
+    def under_hand(i):
+        j = parent[i]
+        while j >= 0:
+            if set(toks[j]) & {"hand", "wrist", "palm"}:
+                return True
+            j = parent[j]
+        return False
+
     for i, tk in enumerate(toks):
         if excluded[i] or i in assigned:
             continue
         tset = set(tk)
         key = next((_FINGERS[t] for t in tk if t in _FINGERS), None)
+        # index / middle / ring are also face, jewellery and helper words: a finger says so or hangs under a hand
+        if key is not None and not ("finger" in tset or key in ("thumb", "pinky") or under_hand(i)):
+            key = None
         if key is None and "finger" in tset:
             numbers = [t for t in tk if t.isdigit()]
             key = ("group", int(numbers[0][0])) if numbers else None
@@ -1078,9 +1136,7 @@ class DARKTIDE_OT_new_starter_asset(bpy.types.Operator):
     bl_description = "Create an asset collection with the chosen Darktide skeleton and an example mesh weighted to it"
     bl_options = {"REGISTER", "UNDO"}
 
-    preset: EnumProperty(name="Skeleton", default="human", items=[
-        ("human", "Human", ""), ("ogryn", "Ogryn player", ""),
-        ("traitor_guard", "Traitor guard", ""), ("flamer", "Flamer", "")])
+    preset: EnumProperty(name="Skeleton", default="human", items=STARTER_PRESETS)
     region: EnumProperty(name="Region", default="hands", items=[
         ("hands", "Hands (glove-like)", "Tube gloves weighted to the hand and finger bones"),
         ("head", "Head (helmet-like)", "Ellipsoid helmet weighted to the head and neck"),

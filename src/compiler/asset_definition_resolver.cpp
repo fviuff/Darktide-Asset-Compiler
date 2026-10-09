@@ -10,6 +10,36 @@ bool resolve_asset_definition(Scene& scene, std::string& error) {
     error.clear();
     scene.collider_primitives.clear();
     const auto& asset = scene.asset_definition;
+    // a node actor's mesh is its shape, never drawn
+    std::set<int> actor_nodes;
+    std::set<std::string> actor_names;
+    for (const auto& actor : asset.node_actors) {
+        if (actor.source_node < 0 || static_cast<std::size_t>(actor.source_node) >= scene.nodes.size() ||
+            !actor_nodes.insert(actor.source_node).second) {
+            error = "node actor has an invalid or repeated node"; return false;
+        }
+        if (actor.name.empty() || !actor_names.insert(actor.name).second) {
+            error = "actor names must be unique: '" + actor.name + "'"; return false;
+        }
+        if (scene.nodes[static_cast<std::size_t>(actor.source_node)].skin >= 0) {
+            error = "actor '" + actor.name + "' is a skinned mesh; give it an unskinned mesh parented to the bone"; return false;
+        }
+    }
+    if (!actor_nodes.empty()) {
+        std::vector<Primitive> render;
+        std::set<int> found;
+        for (auto& primitive : scene.primitives) {
+            if (!actor_nodes.count(primitive.collision_object)) { render.push_back(std::move(primitive)); continue; }
+            if (primitive.mode != 4 || primitive.indices.size() < 3) {
+                error = "actor meshes must be triangles"; return false;
+            }
+            found.insert(primitive.collision_object);
+            scene.collider_primitives.push_back(std::move(primitive));
+        }
+        for (const auto& actor : asset.node_actors)
+            if (!found.count(actor.source_node)) { error = "actor '" + actor.name + "' has no mesh to take its shape from"; return false; }
+        scene.primitives = std::move(render);
+    }
     if (!asset.node_bodies.empty() || !asset.joints.empty()) {
         if (asset.body) { error = "version 1 scene body cannot be mixed with version 2 node bodies"; return false; }
         std::map<std::string, const BodyDefinition*> bodies;

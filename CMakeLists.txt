@@ -223,7 +223,8 @@ if(WIN32)
         "${DARKTIDE_DIRECTXTEX_DIR}/DirectXTex/DirectXTexPMAlpha.cpp"
         "${DARKTIDE_DIRECTXTEX_DIR}/DirectXTex/DirectXTexResize.cpp"
         "${DARKTIDE_DIRECTXTEX_DIR}/DirectXTex/DirectXTexTGA.cpp"
-        "${DARKTIDE_DIRECTXTEX_DIR}/DirectXTex/DirectXTexUtil.cpp")
+        "${DARKTIDE_DIRECTXTEX_DIR}/DirectXTex/DirectXTexUtil.cpp"
+        "${DARKTIDE_DIRECTXTEX_DIR}/DirectXTex/DirectXTexWIC.cpp")
     target_include_directories(DarktideDirectXTex PUBLIC
         "${DARKTIDE_DIRECTXTEX_DIR}/DirectXTex"
         "${DARKTIDE_DIRECTXMATH_DIR}/Inc")

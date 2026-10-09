@@ -36,6 +36,7 @@ struct BuildMetadata {
     std::optional<int> selected_scene;
     std::optional<int> requested_clip;
     std::vector<int> emitted_clips;
+    std::string package_name;
     TargetProfile target_profile = darktide_target_profile();
 };
 bool serialize_graph(const ResourceGraph& graph, const std::filesystem::path& directory,

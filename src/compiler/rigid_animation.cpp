@@ -194,6 +194,8 @@ bool lower_rigid_animation(const Scene& source, Scene& lowered, std::string& err
         if (!retain_physics_node(joint.source_node, "joint")) return false;
     for (const auto& collider : source.asset_definition.colliders)
         if (!retain_physics_node(collider.source_node, "collider")) return false;
+    for (const auto& actor : source.asset_definition.node_actors)
+        if (!retain_physics_node(actor.source_node, "actor")) return false;
     for (const auto& primitive : source.collider_primitives) {
         if (primitive.source_node < -1 || primitive.collision_object < -1 || primitive.render_owner_node < -1) {
             error = "rigid animation collider geometry has an invalid node reference";
@@ -256,6 +258,8 @@ bool lower_rigid_animation(const Scene& source, Scene& lowered, std::string& err
         joint.source_node = remap[static_cast<std::size_t>(joint.source_node)];
     for (auto& collider : result.asset_definition.colliders)
         collider.source_node = remap[static_cast<std::size_t>(collider.source_node)];
+    for (auto& actor : result.asset_definition.node_actors)
+        actor.source_node = remap[static_cast<std::size_t>(actor.source_node)];
     for (auto& member : result.asset_definition.visibility_groups)
         member.source_node = remap[static_cast<std::size_t>(member.source_node)];
     for (auto& level : result.asset_definition.lod_levels)

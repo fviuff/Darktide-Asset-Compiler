@@ -502,6 +502,7 @@ CompilationPlan plan_compilation(const Scene& scene, const CompileOptions& optio
             plan.state_machine_variables.push_back({variable.name, variable.initial_value,
                 variable.minimum, variable.maximum});
         }
+        plan.state_machine_declared_events = options.state_machine_declared_events;
         using EventKey = std::pair<std::size_t, std::string>;
         std::map<EventKey, std::optional<std::size_t>> event_kinds;
         std::map<EventKey, std::size_t> selector_indices;

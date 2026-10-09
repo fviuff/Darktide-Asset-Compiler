@@ -190,6 +190,35 @@ std::vector<std::uint8_t> build_dds(std::uint32_t width,std::uint32_t height,con
     std::vector<std::uint8_t> h(148,0);std::memcpy(h.data(),"DDS ",4);auto put=[&](std::size_t p,std::uint32_t v){std::memcpy(h.data()+p,&v,4);};std::uint32_t flags=0x00001007u|0x00080000u;if(mips.size()>1)flags|=0x00020000u;std::uint32_t caps=0x00001000u;if(mips.size()>1)caps|=0x00000008u|0x00400000u;put(4,124);put(8,flags);put(12,height);put(16,width);put(20,static_cast<std::uint32_t>(mips.front().bytes.size()));put(28,static_cast<std::uint32_t>(mips.size()));put(76,32);put(80,4);std::memcpy(h.data()+84,"DX10",4);put(108,caps);put(128,profile.dxgi_format);put(132,3);put(140,1);for(const auto&m:mips)append_bytes(h,m.bytes);return h;
 }
 
+#ifdef DTGLB_USE_DIRECTXTEX
+// pixel format of a DDS header: DX10 header or one of the legacy formats the game uses
+DXGI_FORMAT dds_format(const std::vector<std::uint8_t>& dds) {
+    const auto d32 = [&](std::size_t at) { std::uint32_t v = 0; std::memcpy(&v, dds.data() + at, 4); return v; };
+    if (std::memcmp(dds.data() + 84, "DX10", 4) == 0) return dds.size() >= 148 ? static_cast<DXGI_FORMAT>(d32(128)) : DXGI_FORMAT_UNKNOWN;
+    switch (d32(84)) {
+    case 111: return DXGI_FORMAT_R16_FLOAT;
+    case 112: return DXGI_FORMAT_R16G16_FLOAT;
+    case 113: return DXGI_FORMAT_R16G16B16A16_FLOAT;
+    case 114: return DXGI_FORMAT_R32_FLOAT;
+    case 115: return DXGI_FORMAT_R32G32_FLOAT;
+    case 116: return DXGI_FORMAT_R32G32B32A32_FLOAT;
+    case 0x31545844: return DXGI_FORMAT_BC1_UNORM; // DXT1
+    case 0x33545844: return DXGI_FORMAT_BC2_UNORM; // DXT3
+    case 0x35545844: return DXGI_FORMAT_BC3_UNORM; // DXT5
+    case 0x31495441: return DXGI_FORMAT_BC4_UNORM; // ATI1
+    case 0x32495441: return DXGI_FORMAT_BC5_UNORM; // ATI2
+    case 0: {
+        const std::uint32_t bits = d32(88), red = d32(92), alpha = d32(104);
+        if (bits == 32) return red == 0xff ? DXGI_FORMAT_R8G8B8A8_UNORM : DXGI_FORMAT_B8G8R8A8_UNORM;
+        if (bits == 8) return alpha ? DXGI_FORMAT_A8_UNORM : DXGI_FORMAT_R8_UNORM;
+        if (bits == 16) return DXGI_FORMAT_R8G8_UNORM;
+        return DXGI_FORMAT_UNKNOWN;
+    }
+    default: return DXGI_FORMAT_UNKNOWN;
+    }
+}
+#endif
+
 #ifdef _WIN32
 HMODULE load_oodle_module(const std::filesystem::path& path, DWORD* failure = nullptr) {
     DWORD old_mode = 0;
@@ -362,6 +391,19 @@ bool oodle_compress(const std::vector<std::uint8_t>& input, std::vector<std::uin
 #else
     (void)input; (void)packed;
     error = "Oodle compression requires Darktide's Windows Oodle DLL (unsupported on this platform)";
+    return false;
+#endif
+}
+
+bool oodle_decompress(const std::vector<std::uint8_t>& packed, std::vector<std::uint8_t>& output, std::string& error) {
+#ifdef _WIN32
+    DarktideOodle oodle;
+    if (!oodle.load(error)) return false;
+    if (!oodle.decompress(packed.data(), packed.size(), output, error)) { error = "Oodle could not unpack the data"; return false; }
+    return true;
+#else
+    (void)packed; (void)output;
+    error = "Oodle decompression requires Darktide's Windows Oodle DLL (unsupported on this platform)";
     return false;
 #endif
 }
@@ -687,34 +729,7 @@ bool encode_texture_like(const ImageRGBA& source, const std::vector<std::uint8_t
     const auto d32 = [&](std::size_t at) { std::uint32_t v = 0; std::memcpy(&v, dds.data() + at, 4); return v; };
     const std::uint32_t height = d32(12), width = d32(16), mip_count = std::max(1u, d32(28));
     const std::uint32_t body_flags = u32(tail + 4), footer = u32(game_body.size() - 4);
-    DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
-    const std::uint32_t fourcc = d32(84);
-    if (std::memcmp(dds.data() + 84, "DX10", 4) == 0 && dds.size() >= 148) {
-        format = static_cast<DXGI_FORMAT>(d32(128));
-    } else {
-        // legacy DDS pixel formats the game uses
-        switch (fourcc) {
-        case 111: format = DXGI_FORMAT_R16_FLOAT; break;
-        case 112: format = DXGI_FORMAT_R16G16_FLOAT; break;
-        case 113: format = DXGI_FORMAT_R16G16B16A16_FLOAT; break;
-        case 114: format = DXGI_FORMAT_R32_FLOAT; break;
-        case 115: format = DXGI_FORMAT_R32G32_FLOAT; break;
-        case 116: format = DXGI_FORMAT_R32G32B32A32_FLOAT; break;
-        case 0x31545844: format = DXGI_FORMAT_BC1_UNORM; break; // DXT1
-        case 0x33545844: format = DXGI_FORMAT_BC2_UNORM; break; // DXT3
-        case 0x35545844: format = DXGI_FORMAT_BC3_UNORM; break; // DXT5
-        case 0x31495441: format = DXGI_FORMAT_BC4_UNORM; break; // ATI1
-        case 0x32495441: format = DXGI_FORMAT_BC5_UNORM; break; // ATI2
-        case 0: {
-            const std::uint32_t bits = d32(88), red = d32(92), alpha = d32(104);
-            if (bits == 32) format = red == 0xff ? DXGI_FORMAT_R8G8B8A8_UNORM : DXGI_FORMAT_B8G8R8A8_UNORM;
-            else if (bits == 8) format = alpha ? DXGI_FORMAT_A8_UNORM : DXGI_FORMAT_R8_UNORM;
-            else if (bits == 16) format = DXGI_FORMAT_R8G8_UNORM;
-            break;
-        }
-        default: break;
-        }
-    }
+    const DXGI_FORMAT format = dds_format(dds);
     if (format == DXGI_FORMAT_UNKNOWN || !width || !height) {
         error = "the game's texture uses a pixel format the compiler can't write";
         return false;
@@ -830,6 +845,114 @@ bool inspect_texture_blob(const std::vector<std::uint8_t>& blob,std::string& rep
     if(external_bytes%65536u||chunks!=external_bytes/65536u){error="texture chunk count does not match 64 KiB streamed BC tiles";return false;}
     p+=4ull*chunks;
     std::ostringstream ss;ss<<"texture "<<w<<"x"<<h<<", kind "<<kind<<", mips "<<mip_count<<", streamed mips "<<streamed<<", chunks "<<chunks<<", flags 0x"<<std::hex<<flags<<", footer 0x"<<footer;report=ss.str();return true;
+}
+
+bool texture_body_image(const std::vector<std::uint8_t>& body, ImageRGBA& out, std::string& error, bool* srgb) {
+#ifdef DTGLB_USE_DIRECTXTEX
+    const auto u32 = [&](std::size_t at) { std::uint32_t v = 0; std::memcpy(&v, body.data() + at, 4); return v; };
+    if (body.size() < 12 + 156) { error = "texture body is truncated"; return false; }
+
+    DirectX::Image mip{};
+    std::vector<std::uint8_t> dds;
+    if (u32(0) == 1) {
+        // kind 1: Oodle-packed DDS header + the resident mips; the mip table after it says which mip comes first
+        DarktideOodle oodle;
+        if (!oodle.load(error)) return false;
+        const std::size_t packed = u32(4);
+        dds.resize(u32(8));
+        if (12 + packed + 20 + 16 * 8 > body.size() || dds.size() < 148 || !oodle.decompress(body.data() + 12, packed, dds, error)) {
+            if (error.empty()) error = "texture body is truncated";
+            return false;
+        }
+        const std::size_t p = 12 + packed;
+        const std::uint32_t streamed = u32(p + 8), width = u32(p + 12), height = u32(p + 16);
+        if (u32(p) != 67 || streamed >= 16 || !u32(p + 24 + streamed * 8)) { error = "texture has no resident mip"; return false; }
+        mip.format = dds_format(dds);
+        mip.width = std::max(1u, width >> streamed);
+        mip.height = std::max(1u, height >> streamed);
+        if (mip.format == DXGI_FORMAT_UNKNOWN ||
+            FAILED(DirectX::ComputePitch(mip.format, mip.width, mip.height, mip.rowPitch, mip.slicePitch))) {
+            error = "texture uses an unknown pixel format";
+            return false;
+        }
+        const std::size_t at = 148 + u32(p + 20 + streamed * 8);
+        if (at + mip.slicePitch > dds.size()) { error = "texture mip is truncated"; return false; }
+        mip.pixels = dds.data() + at;
+    } else {
+        // kind 0: a plain DDS with every mip, mip 0 right after the header
+        dds.assign(body.begin() + 12, body.end() - 156);
+        const auto d32 = [&](std::size_t at) { std::uint32_t v = 0; std::memcpy(&v, dds.data() + at, 4); return v; };
+        if (dds.size() < 128 || std::memcmp(dds.data(), "DDS ", 4) != 0) { error = "texture does not hold a DDS image"; return false; }
+        mip.format = dds_format(dds);
+        mip.width = d32(16);
+        mip.height = d32(12);
+        if (mip.format == DXGI_FORMAT_UNKNOWN || !mip.width || !mip.height ||
+            FAILED(DirectX::ComputePitch(mip.format, mip.width, mip.height, mip.rowPitch, mip.slicePitch))) {
+            error = "texture uses an unknown pixel format";
+            return false;
+        }
+        const std::size_t at = std::memcmp(dds.data() + 84, "DX10", 4) == 0 ? 148 : 128;
+        if (at + mip.slicePitch > dds.size()) { error = "texture mip is truncated"; return false; }
+        mip.pixels = dds.data() + at;
+    }
+    // keep the stored bytes: sRGB stays sRGB
+    const DXGI_FORMAT rgba = DirectX::IsSRGB(mip.format) ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : DXGI_FORMAT_R8G8B8A8_UNORM;
+    DirectX::ScratchImage converted;
+    const HRESULT hr = DirectX::IsCompressed(mip.format)
+        ? DirectX::Decompress(mip, rgba, converted)
+        : DirectX::Convert(mip, rgba, DirectX::TEX_FILTER_FORCE_NON_WIC, DirectX::TEX_THRESHOLD_DEFAULT, converted);
+    if (FAILED(hr)) {
+        std::ostringstream ss;
+        ss << "DirectXTex could not decode the texture (format " << static_cast<int>(mip.format) << ", " << mip.width << "x"
+           << mip.height << ", HRESULT 0x" << std::hex << static_cast<unsigned long>(hr) << ")";
+        error = ss.str();
+        return false;
+    }
+    if (srgb) *srgb = DirectX::IsSRGB(mip.format);
+    const DirectX::Image& image = *converted.GetImage(0, 0, 0);
+    out.width = static_cast<std::uint32_t>(image.width);
+    out.height = static_cast<std::uint32_t>(image.height);
+    out.pixels.resize(static_cast<std::size_t>(out.width) * out.height * 4);
+    for (std::size_t y = 0; y < image.height; ++y)
+        std::memcpy(out.pixels.data() + y * out.width * 4, image.pixels + y * image.rowPitch, out.width * 4);
+    return true;
+#else
+    (void)body; (void)out; (void)srgb;
+    error = "reading the game's textures needs the Windows build (DirectXTex and Darktide's Oodle DLL)";
+    return false;
+#endif
+}
+
+bool write_png(const ImageRGBA& image, const std::filesystem::path& path, std::string& error) {
+#if defined(_WIN32) && defined(DTGLB_USE_DIRECTXTEX)
+    const HRESULT coinit = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    if (FAILED(coinit) && coinit != RPC_E_CHANGED_MODE) { error = "WIC COM initialization failed"; return false; }
+    const DirectX::Image source{image.width, image.height, DXGI_FORMAT_R8G8B8A8_UNORM, static_cast<std::size_t>(image.width) * 4,
+                                static_cast<std::size_t>(image.width) * image.height * 4, const_cast<std::uint8_t*>(image.pixels.data())};
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
+    const HRESULT hr = DirectX::SaveToWICFile(source, DirectX::WIC_FLAGS_FORCE_SRGB, DirectX::GetWICCodec(DirectX::WIC_CODEC_PNG),
+                                              path.c_str());
+    if (coinit == S_OK || coinit == S_FALSE) CoUninitialize();
+    if (FAILED(hr)) { error = "could not write " + path.string(); return false; }
+    return true;
+#elif defined(_WIN32)
+    (void)image; (void)path;
+    error = "writing PNG files needs the DirectXTex build";
+    return false;
+#else
+    png_image png{};
+    png.version = PNG_IMAGE_VERSION;
+    png.width = image.width;
+    png.height = image.height;
+    png.format = PNG_FORMAT_RGBA;
+    png_alloc_size_t size = 0;
+    if (!png_image_write_get_memory_size(png, size, 0, image.pixels.data(), 0, nullptr)) { error = "PNG encode failed"; return false; }
+    std::vector<std::uint8_t> bytes(size);
+    if (!png_image_write_to_memory(&png, bytes.data(), &size, 0, image.pixels.data(), 0, nullptr)) { error = "PNG encode failed"; return false; }
+    bytes.resize(size);
+    return write_file(path, bytes, error);
+#endif
 }
 
 } // namespace dtglb::stingray::texture

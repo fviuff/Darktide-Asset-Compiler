@@ -695,7 +695,7 @@ int compile(const CompileOptions& requested_options) {
         std::cerr << "compile failed: " << error << "\n";
         return 2;
     }
-    if (options.in_place && !processing::remove_root_motion(scene, error)) {
+    if ((options.in_place || options.root_motion) && !processing::remove_root_motion(scene, error, options.root_motion)) {
         std::cerr << "compile failed: " << error << "\n";
         return 2;
     }
@@ -834,6 +834,7 @@ int compile(const CompileOptions& requested_options) {
     metadata.selected_scene = scene.selected_scene >= 0 ? std::optional<int>(scene.selected_scene) : std::nullopt;
     metadata.requested_clip = options.animation_index;
     metadata.target_profile = context.target_profile();
+    metadata.package_name = options.package_name;
     for (const auto index : plan.animation_indices) metadata.emitted_clips.push_back(scene.animations[index].source_index);
     if (!compiler::build_glb_resources(scene, options, context, plan, graph, feature_status, error)) {
         cleanup_staging(staging);

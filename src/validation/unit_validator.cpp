@@ -117,10 +117,7 @@ bool validate_primary_actor(Reader& r, const std::set<std::uint32_t>& scene_node
         report = "invalid: physics actor header is truncated or non-finite";
         return false;
     }
-    const std::set<std::uint32_t> actor_templates{
-        stingray::id32_from_id64("static"), stingray::id32_from_id64("dynamic"),
-        stingray::id32_from_id64("keyframed")};
-    if (name == 0 || !actor_templates.count(actor_template) || !scene_nodes.count(node) ||
+    if (name == 0 || actor_template == 0 || !scene_nodes.count(node) ||
         mass < 0.0f || shape_count == 0 || !r.bytes ||
         shape_count > (r.bytes->size() - r.p) / 88u) {
         report = "invalid: primary physics actor header is outside the supported family";
@@ -634,7 +631,23 @@ bool validate_unit_v115(const std::filesystem::path& path, std::string& report,
     }
     for (std::uint32_t m = 0; m < mesh_count; ++m)
         if ((lod_owner[m] != 0) != ((mesh_flags[m] & 0x8u) != 0)) { report = "invalid: LOD render flag 0x8 and LOD step membership disagree"; return false; }
-    for (int i = 0; i < 5; ++i) if (!zero_u32(r, "late static object family", report)) return false;
+    for (int i = 0; i < 3; ++i) if (!zero_u32(r, "late static object family", report)) return false;
+    std::uint32_t mover_count = 0;
+    if (!r.u32(mover_count) || mover_count > 16u || !r.need(mover_count * 28u)) {
+        report = "invalid: UNIT mover records are truncated";
+        return false;
+    }
+    for (std::uint32_t i = 0; i < mover_count; ++i) {
+        std::uint32_t name = 0, filter = 0, on_actor = 0, on_mover = 0;
+        float height = 0.0f, radius = 0.0f, slope = 0.0f;
+        if (!r.u32(name) || !finite_f32(r, height) || !finite_f32(r, radius) || !r.u32(filter) ||
+            !finite_f32(r, slope) || !r.u32(on_actor) || !r.u32(on_mover) || name == 0 || filter == 0 ||
+            height <= 0.0f || radius <= 0.0f) {
+            report = "invalid: UNIT mover record";
+            return false;
+        }
+    }
+    if (!zero_u32(r, "late static object family", report)) return false;
     std::uint8_t animated = 0;
     if (!r.u8(animated) || animated > 1) {
         report = "invalid: UNIT animation-blender flag is truncated or not boolean";
@@ -798,6 +811,7 @@ bool validate_unit_v115(const std::filesystem::path& path, std::string& report,
     if (light_count != 0) ss << light_count << " light(s)" << (shadow_lights ? " (" + std::to_string(shadow_lights) + " casting shadows)" : std::string()) << ", ";
     if (visibility_group_count != 0) ss << visibility_group_count << " visibility group(s), ";
     if (lod_count != 0) ss << lod_count << " LOD object(s), ";
+    if (mover_count != 0) ss << mover_count << " mover(s), ";
     if (flow_nodes != 0) ss << "flow " << flow_nodes << " node(s), ";
     if (data_entries != 0) ss << data_entries << " data value(s), ";
     if (simple_tracks != 0) ss << "simple animation " << simple_tracks << " track(s), ";

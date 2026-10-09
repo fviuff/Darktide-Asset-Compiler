@@ -51,6 +51,28 @@ struct ColliderDefinition {
     ColliderRole role = ColliderRole::Collision;
 };
 
+// An actor of its own on a node (a UNIT actor record, not part of the PhysX collection): the node's mesh
+// gives its shape, fitted in the node's frame. Enemy hit zones are these (keyframed, following their bone,
+// looked up by name from Lua). Templates are physics_properties names or "#xxxxxxxx" ids.
+struct NodeActorDefinition {
+    std::string name;
+    std::string actor_template = "keyframed";
+    std::string shape_template = "default";
+    std::string material = "default";
+    ColliderShape shape = ColliderShape::Capsule;
+    bool spawn = true;          // created when the unit spawns (else by script, Unit.create_actor)
+    int source_node = -1;
+};
+
+// A character mover (the capsule that walks a unit through the level, Unit.set_mover / Mover.*).
+struct MoverDefinition {
+    std::string name = "mover";
+    float height = 1.8f;
+    float radius = 0.4f;
+    float slope_limit = 0.6981317f;   // radians
+    std::string collision_filter = "filter_minion_mover";
+};
+
 // A node's meshes, and every mesh below it, belong to the named UNIT visibility
 // group (Unit.set_visibility(unit, group, visible)).
 struct VisibilityGroupMember {
@@ -104,6 +126,8 @@ struct AssetDefinition {
     std::vector<ColliderDefinition> colliders;
     std::vector<BodyDefinition> node_bodies;
     std::vector<JointDefinition> joints;
+    std::vector<NodeActorDefinition> node_actors;
+    std::vector<MoverDefinition> movers;
     std::vector<VisibilityGroupMember> visibility_groups;
     std::vector<DangleDefinition> dangles;
     std::vector<AimDefinition> aims;

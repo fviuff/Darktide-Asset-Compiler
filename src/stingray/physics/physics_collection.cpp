@@ -400,4 +400,206 @@ bool describe_physics_joints(const std::vector<std::uint8_t>& dependencies, cons
     return true;
 }
 
+bool describe_cooked_meshes(const std::vector<std::pair<std::uint32_t, std::vector<std::uint8_t>>>& meshes,
+                            std::string& out, std::string& error) {
+    std::lock_guard<std::recursive_mutex> guard(physx_context_mutex());
+    PxFoundation* foundation = physics_foundation(error);
+    if (!foundation) return false;
+    PxTolerancesScale scale;
+    SdkObjects resources;
+    PxPhysics* physics = resources.physics = PxCreatePhysics(PX_PHYSICS_VERSION, *foundation, scale, true, nullptr);
+    if (!physics) { error = "PxCreatePhysics failed"; return false; }
+    std::ostringstream text;
+    text.precision(9);
+    text << "[";
+    for (std::size_t m = 0; m < meshes.size(); ++m) {
+        const auto& [type, cooked] = meshes[m];
+        std::vector<std::uint8_t> bytes = cooked;
+        PxDefaultMemoryInputData input(bytes.data(), static_cast<PxU32>(bytes.size()));
+        text << (m ? "," : "") << "{\"vertices\":[";
+        if (type == 4) {
+            PxConvexMesh* mesh = physics->createConvexMesh(input);
+            if (!mesh) { error = "a cooked convex mesh does not load"; return false; }
+            resources.convex_meshes.push_back(mesh);
+            const PxVec3* vertices = mesh->getVertices();
+            for (PxU32 v = 0; v < mesh->getNbVertices(); ++v)
+                text << (v ? "," : "") << vertices[v].x << "," << vertices[v].y << "," << vertices[v].z;
+            text << "],\"triangles\":[";
+            const PxU8* indices = mesh->getIndexBuffer();
+            bool first = true;
+            for (PxU32 polygon = 0; polygon < mesh->getNbPolygons(); ++polygon) {
+                PxHullPolygon data;
+                mesh->getPolygonData(polygon, data);
+                for (PxU16 corner = 2; corner < data.mNbVerts; ++corner) {
+                    text << (first ? "" : ",") << int(indices[data.mIndexBase]) << "," << int(indices[data.mIndexBase + corner - 1])
+                         << "," << int(indices[data.mIndexBase + corner]);
+                    first = false;
+                }
+            }
+        } else if (type == 3) {
+            PxTriangleMesh* mesh = physics->createTriangleMesh(input);
+            if (!mesh) { error = "a cooked triangle mesh does not load"; return false; }
+            resources.triangle_meshes.push_back(mesh);
+            const PxVec3* vertices = mesh->getVertices();
+            for (PxU32 v = 0; v < mesh->getNbVertices(); ++v)
+                text << (v ? "," : "") << vertices[v].x << "," << vertices[v].y << "," << vertices[v].z;
+            text << "],\"triangles\":[";
+            const bool wide = !mesh->getTriangleMeshFlags().isSet(PxTriangleMeshFlag::e16_BIT_INDICES);
+            const void* triangles = mesh->getTriangles();
+            for (PxU32 i = 0; i < mesh->getNbTriangles() * 3; ++i)
+                text << (i ? "," : "") << (wide ? static_cast<const PxU32*>(triangles)[i] : static_cast<const PxU16*>(triangles)[i]);
+        } else {
+            error = "cooked mesh type must be 3 (triangles) or 4 (convex)";
+            return false;
+        }
+        text << "]}";
+    }
+    text << "]\n";
+    out = text.str();
+    return true;
+}
+
+bool describe_physics_collection(const std::vector<std::uint8_t>& scene, std::string& out, std::string& error) {
+    if (scene.size() < 128) { error = "the physics scene is truncated"; return false; }
+    const std::size_t header = scene.size() - 128;
+    const auto word = [&](std::size_t offset) { std::uint32_t v; std::memcpy(&v, scene.data() + offset, 4); return v; };
+    const auto slice = [&](std::uint32_t offset, std::uint32_t length) {
+        return offset <= scene.size() && length <= scene.size() - offset
+            ? std::vector<std::uint8_t>(scene.data() + offset, scene.data() + offset + length) : std::vector<std::uint8_t>();
+    };
+    const auto dependencies = slice(word(header + 8), word(header + 12));
+    const auto objects = slice(word(header + 80), word(header + 84));
+    const std::uint32_t body_offset = word(header + 88), body_count = word(header + 92);
+    const std::uint32_t template_offset = word(header + 112), template_count = word(header + 116);
+    if (dependencies.empty() || objects.empty() || std::uint64_t(body_offset) + body_count * 72ull > header ||
+        std::uint64_t(template_offset) + template_count * 8ull > header) {
+        error = "the physics scene header does not match";
+        return false;
+    }
+    std::lock_guard<std::recursive_mutex> guard(physx_context_mutex());
+    PxFoundation* foundation = physics_foundation(error);
+    if (!foundation) return false;
+    PxTolerancesScale scale;
+    SdkObjects resources;
+    PxPhysics* physics = resources.physics = PxCreatePhysics(PX_PHYSICS_VERSION, *foundation, scale, true, nullptr);
+    if (!physics) { error = "PxCreatePhysics failed"; return false; }
+    resources.extensions = PxInitExtensions(*physics, nullptr);
+    PxSerializationRegistry* registry = resources.registry = resources.extensions ? PxSerialization::createSerializationRegistry(*physics) : nullptr;
+    if (!registry) { error = "PhysX serialization registry initialization failed"; return false; }
+    AlignedBuffer dep_memory(dependencies.size()), obj_memory(objects.size());
+    std::memcpy(dep_memory.data, dependencies.data(), dependencies.size());
+    std::memcpy(obj_memory.data, objects.data(), objects.size());
+    ReloadedCollections loaded;
+    loaded.dependencies = PxSerialization::createCollectionFromBinary(dep_memory.data, *registry);
+    loaded.objects = loaded.dependencies ? PxSerialization::createCollectionFromBinary(obj_memory.data, *registry, loaded.dependencies) : nullptr;
+    if (!loaded.objects) { error = "the physics collections do not load"; return false; }
+
+    std::unordered_map<const PxBase*, std::uint32_t> shape_templates;
+    for (std::uint32_t i = 0; i < template_count; ++i) {
+        const auto index = word(template_offset + i * 8);
+        if (index < loaded.objects->getNbObjects()) shape_templates[&loaded.objects->getObject(index)] = word(template_offset + i * 8 + 4);
+    }
+    const auto pose = [](std::ostringstream& text, const PxTransform& t) {
+        text << "{\"p\":[" << t.p.x << "," << t.p.y << "," << t.p.z << "],\"q\":[" << t.q.x << "," << t.q.y << "," << t.q.z
+             << "," << t.q.w << "]}";
+    };
+    std::unordered_map<const PxRigidActor*, std::uint32_t> body_index;
+    std::ostringstream text;
+    text.precision(9);
+    text << "{\"bodies\":[";
+    for (std::uint32_t b = 0; b < body_count; ++b) {
+        const std::size_t record = body_offset + b * 72u;
+        const auto object = word(record);
+        auto* actor = object < loaded.objects->getNbObjects() ? loaded.objects->getObject(object).is<PxRigidActor>() : nullptr;
+        if (!actor) { error = "a physics body record names no rigid actor"; return false; }
+        body_index[actor] = b;
+        auto* rigid = actor->is<PxRigidDynamic>();
+        text << (b ? "," : "") << "{\"name\":" << word(record + 4) << ",\"node\":" << word(record + 8)
+             << ",\"enabled\":" << word(record + 12) << ",\"dynamic\":" << (rigid ? "true" : "false")
+             << ",\"kinematic\":" << (rigid && rigid->getRigidBodyFlags().isSet(PxRigidBodyFlag::eKINEMATIC) ? "true" : "false")
+             << ",\"mass\":" << (rigid ? rigid->getMass() : 0.0f) << ",\"pose\":";
+        pose(text, actor->getGlobalPose());
+        text << ",\"shapes\":[";
+        std::vector<PxShape*> shapes(actor->getNbShapes());
+        actor->getShapes(shapes.data(), static_cast<PxU32>(shapes.size()));
+        for (std::size_t s = 0; s < shapes.size(); ++s) {
+            const PxGeometryHolder geometry = shapes[s]->getGeometry();
+            text << (s ? "," : "") << "{\"type\":";
+            switch (geometry.getType()) {
+            case PxGeometryType::eSPHERE: text << "\"sphere\",\"radius\":" << geometry.sphere().radius; break;
+            case PxGeometryType::eCAPSULE:
+                text << "\"capsule\",\"radius\":" << geometry.capsule().radius << ",\"half_height\":" << geometry.capsule().halfHeight; break;
+            case PxGeometryType::eBOX: {
+                const auto h = geometry.box().halfExtents;
+                text << "\"box\",\"half_extents\":[" << h.x << "," << h.y << "," << h.z << "]"; break;
+            }
+            case PxGeometryType::eCONVEXMESH: {
+                // the hull as triangles (polygon fans), scaled as the shape uses it
+                const auto& convex = geometry.convexMesh();
+                const PxConvexMesh* mesh = convex.convexMesh;
+                const PxVec3* vertices = mesh->getVertices();
+                const PxU8* indices = mesh->getIndexBuffer();
+                text << "\"convex\",\"vertices\":[";
+                for (PxU32 v = 0; v < mesh->getNbVertices(); ++v) {
+                    const PxVec3 p = convex.scale.toMat33() * vertices[v];
+                    text << (v ? "," : "") << p.x << "," << p.y << "," << p.z;
+                }
+                text << "],\"triangles\":[";
+                bool first_index = true;
+                for (PxU32 polygon = 0; polygon < mesh->getNbPolygons(); ++polygon) {
+                    PxHullPolygon data;
+                    mesh->getPolygonData(polygon, data);
+                    for (PxU16 corner = 2; corner < data.mNbVerts; ++corner) {
+                        text << (first_index ? "" : ",") << int(indices[data.mIndexBase]) << ","
+                             << int(indices[data.mIndexBase + corner - 1]) << "," << int(indices[data.mIndexBase + corner]);
+                        first_index = false;
+                    }
+                }
+                text << "]";
+                break;
+            }
+            case PxGeometryType::eTRIANGLEMESH: text << "\"geometry\""; break;
+            default: text << "\"other\""; break;
+            }
+            const auto found = shape_templates.find(shapes[s]);
+            text << ",\"shape_template\":" << (found == shape_templates.end() ? 0u : found->second) << ",\"local\":";
+            pose(text, shapes[s]->getLocalPose());
+            text << "}";
+        }
+        text << "]}";
+    }
+    text << "],\"joints\":[";
+    static const char* motions[] = {"locked", "limited", "free"};
+    bool first = true;
+    for (PxU32 i = 0; i < loaded.objects->getNbObjects(); ++i) {
+        auto* joint = loaded.objects->getObject(i).is<PxD6Joint>();
+        if (!joint) continue;
+        PxRigidActor *a0 = nullptr, *a1 = nullptr;
+        joint->getActors(a0, a1);
+        const auto i0 = body_index.find(a0), i1 = body_index.find(a1);
+        text << (first ? "" : ",") << "{\"body0\":" << (i0 == body_index.end() ? -1 : static_cast<int>(i0->second))
+             << ",\"body1\":" << (i1 == body_index.end() ? -1 : static_cast<int>(i1->second)) << ",\"frame0\":";
+        first = false;
+        pose(text, joint->getLocalPose(PxJointActorIndex::eACTOR0));
+        text << ",\"frame1\":";
+        pose(text, joint->getLocalPose(PxJointActorIndex::eACTOR1));
+        text << ",\"motion\":[";
+        for (int axis = 0; axis < 6; ++axis)
+            text << (axis ? "," : "") << "\"" << motions[joint->getMotion(static_cast<PxD6Axis::Enum>(axis))] << "\"";
+        const auto twist = joint->getTwistLimit();
+        const auto swing = joint->getSwingLimit();
+        const auto swing_drive = joint->getDrive(PxD6Drive::eSWING), twist_drive = joint->getDrive(PxD6Drive::eTWIST);
+        PxReal force = 0, torque = 0;
+        joint->getBreakForce(force, torque);
+        text << "],\"twist\":[" << twist.lower << "," << twist.upper << "],\"swing\":[" << swing.yAngle << "," << swing.zAngle
+             << "],\"swing_drive\":[" << swing_drive.stiffness << "," << swing_drive.damping << "],\"twist_drive\":["
+             << twist_drive.stiffness << "," << twist_drive.damping << "],\"break\":[" << force << "," << torque
+             << "],\"collision\":" << (joint->getConstraintFlags().isSet(PxConstraintFlag::eCOLLISION_ENABLED) ? "true" : "false")
+             << "}";
+    }
+    text << "]}\n";
+    out = text.str();
+    return true;
+}
+
 } // namespace dtglb::stingray::physics

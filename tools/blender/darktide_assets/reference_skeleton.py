@@ -99,6 +99,11 @@ def _skip_geometry(reader):
 
 
 def _parse_unit(blob):
+    return _read_unit(blob)[0]
+
+
+def _read_unit(blob):
+    """The scene graph nodes, and the reader standing after the mesh objects (at the actors)."""
     body, _stream_name = _body(blob, "UNIT")
     reader = _Reader(body)
     if reader.u32() != 0x73:
@@ -159,7 +164,7 @@ def _parse_unit(blob):
             raise ReferenceSkeletonError("UNIT scene graph has an invalid parent index")
         nodes.append({"index": index, "hash": name_hash, "parent_type": parent_type,
                       "parent_index": parent_index, "world": world, "mesh": index in mesh_nodes})
-    return nodes
+    return nodes, reader
 
 
 def _murmur64(text):

@@ -57,6 +57,16 @@ bool serialize_physics_collections(const std::vector<CollectionBody>& bodies,
                                    std::string& error);
 
 // Loads serialized collections through PhysX and lists their D6 joints (motion per axis, limits, drives, break force).
+// A unit's physics scene (the size-prefixed blob holding both collections and the body tables) as JSON: bodies
+// (name, node, enabled, mass, global pose, shapes with their template and local pose) and D6 joints (bodies, frames,
+// motions, limits, drives, break force).
+bool describe_physics_collection(const std::vector<std::uint8_t>& scene, std::string& out, std::string& error);
+
+// Cooked PhysX shapes (type 3 triangle mesh, 4 convex, as UNIT actor records carry them) as JSON: vertices and
+// triangles per mesh (convex polygons as fans).
+bool describe_cooked_meshes(const std::vector<std::pair<std::uint32_t, std::vector<std::uint8_t>>>& meshes,
+                            std::string& out, std::string& error);
+
 bool describe_physics_joints(const std::vector<std::uint8_t>& dependencies, const std::vector<std::uint8_t>& objects,
                              std::string& out, std::string& error);
 

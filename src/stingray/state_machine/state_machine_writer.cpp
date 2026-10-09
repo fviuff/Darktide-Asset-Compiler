@@ -5,6 +5,7 @@
 #include "stingray/murmur_hash.h"
 #include "stingray/resource_name.h"
 
+#include <cctype>
 #include <cstring>
 #include <algorithm>
 #include <cmath>
@@ -18,6 +19,14 @@ namespace {
 constexpr std::string_view kTypeName = "state_machine";
 constexpr std::string_view kStateName = "loop";
 constexpr std::string_view kLengthVariable = "current_animation_length";
+
+// An event or variable name as its IdString32; "#1234abcd" is the raw hash (names the game only has as hashes).
+std::uint32_t name_id32(const std::string& name) {
+    if (name.size() == 9 && name[0] == '#' &&
+        std::all_of(name.begin() + 1, name.end(), [](unsigned char c) { return std::isxdigit(c) != 0; }))
+        return static_cast<std::uint32_t>(std::stoul(name.substr(1), nullptr, 16));
+    return id32_from_id64(name);
+}
 
 class Reader {
 public:
@@ -419,6 +428,7 @@ bool make_direct_body(const std::vector<DirectEventState>& states,
                       const std::vector<BoneConstraint>& constraints,
                       std::uint32_t bone_count,
                       const std::vector<std::uint32_t>& ragdoll_actor_names,
+                      const std::vector<std::string>& declared_events,
                       std::vector<std::uint8_t>& output, std::string& error) {
     if (states.empty()) { error = "STATE_MACHINE requires at least one authored state"; return false; }
     if (!valid_constraints(constraints, bone_count, error)) return false;
@@ -506,13 +516,25 @@ bool make_direct_body(const std::vector<DirectEventState>& states,
         auto named = state.events_at;
         if (!state.exit_event.empty()) named.push_back({0.0f, state.exit_event});
         for (const auto& [time, event] : named) {
-            const auto event_hash = id32_from_id64(event);
+            const auto event_hash = name_id32(event);
             const auto [known, inserted] = event_names.emplace(event_hash, event);
             if (inserted) event_hashes.push_back(event_hash);
             else if (known->second != event) {
                 error = "STATE_MACHINE event names collide in the native IdString32 domain";
                 return false;
             }
+        }
+    }
+    // events scripts may send that no transition here reacts to: the engine stops on an event the machine
+    // doesn't list, so a unit that takes over a game character's scripts lists all of theirs
+    for (const auto& event : declared_events) {
+        if (event.empty()) { error = "STATE_MACHINE declared event names must be nonempty"; return false; }
+        const auto event_hash = name_id32(event);
+        const auto [known, inserted] = event_names.emplace(event_hash, event);
+        if (inserted) event_hashes.push_back(event_hash);
+        else if (known->second != event && known->second[0] != '#' && event[0] != '#') {
+            error = "STATE_MACHINE event names collide in the native IdString32 domain";
+            return false;
         }
     }
     // Layers in order, each listing its states; a state's index inside its layer is what transitions use.
@@ -555,7 +577,7 @@ bool make_direct_body(const std::vector<DirectEventState>& states,
             error = "STATE_MACHINE transition blend time must be finite and nonnegative";
             return false;
         }
-        const auto event_hash = id32_from_id64(transition.event_name);
+        const auto event_hash = name_id32(transition.event_name);
         const auto [event, inserted] = event_names.emplace(event_hash, transition.event_name);
         if (inserted) {
             event_hashes.push_back(event_hash);
@@ -573,7 +595,7 @@ bool make_direct_body(const std::vector<DirectEventState>& states,
             error = "STATE_MACHINE variable names must be nonempty and cannot replace current_animation_length";
             return false;
         }
-        if (!variable_ids.insert(id32_from_id64(variable.name)).second) {
+        if (!variable_ids.insert(name_id32(variable.name)).second) {
             error = "STATE_MACHINE variable names collide in the native IdString32 domain";
             return false;
         }
@@ -607,7 +629,7 @@ bool make_direct_body(const std::vector<DirectEventState>& states,
             error = "STATE_MACHINE selectors must contain at least one case";
             return false;
         }
-        const auto event_hash = id32_from_id64(selector.event_name);
+        const auto event_hash = name_id32(selector.event_name);
         const auto [event, inserted] = event_names.emplace(event_hash, selector.event_name);
         if (inserted) event_hashes.push_back(event_hash);
         else if (event->second != selector.event_name) {
@@ -647,7 +669,7 @@ bool make_direct_body(const std::vector<DirectEventState>& states,
     }
     for (std::size_t transition_index = 0; transition_index < transitions.size(); ++transition_index) {
         const auto& transition = transitions[transition_index];
-        const auto key = std::make_pair(transition.from_state, id32_from_id64(transition.event_name));
+        const auto key = std::make_pair(transition.from_state, name_id32(transition.event_name));
         if (selector_events.count(key) && !selected_transitions.count(transition_index)) {
             error = "STATE_MACHINE selector event cannot also have an unconditional transition";
             return false;
@@ -708,7 +730,7 @@ bool make_direct_body(const std::vector<DirectEventState>& states,
             for (const auto transition_index : state_transitions[state_index]) {
                 const auto& transition = transitions[transition_index];
                 if (!selected_transitions.count(transition_index)) {
-                    body.u32(id32_from_id64(transition.event_name));
+                    body.u32(name_id32(transition.event_name));
                     body.u32(local_transition_index);
                     body.u8(0); // unconditional direct event binding
                 }
@@ -717,7 +739,7 @@ bool make_direct_body(const std::vector<DirectEventState>& states,
             for (std::size_t local_selector_index = 0;
                  local_selector_index < state_selectors[state_index].size(); ++local_selector_index) {
                 const auto& selector = selectors[state_selectors[state_index][local_selector_index]];
-                body.u32(id32_from_id64(selector.event_name));
+                body.u32(name_id32(selector.event_name));
                 body.u32(static_cast<std::uint32_t>(local_selector_index));
                 body.u8(1); // selector event binding
             }
@@ -758,11 +780,11 @@ bool make_direct_body(const std::vector<DirectEventState>& states,
             body.u32(static_cast<std::uint32_t>(markers.size()));
             for (const auto& [time, event] : markers) {
                 std::uint32_t time_bits{}; std::memcpy(&time_bits, &time, sizeof(time_bits));
-                body.u32(time_bits); body.u32(id32_from_id64(event)); body.u32(1);
+                body.u32(time_bits); body.u32(name_id32(event)); body.u32(1);
             }
             // exit event: sent once when the clip has this many seconds left
             std::uint32_t exit_bits{}; std::memcpy(&exit_bits, &state.exit_blend, sizeof(exit_bits));
-            body.u32(state.exit_event.empty() ? 0u : id32_from_id64(state.exit_event));
+            body.u32(state.exit_event.empty() ? 0u : name_id32(state.exit_event));
             body.u32(state.exit_event.empty() ? 0u : exit_bits);
             // blend weights after the other expressions (see blend_weight_programs); then the speed
             // when it is not the constant 1 at word 4 ("value END" or "variable END")
@@ -819,7 +841,7 @@ bool make_direct_body(const std::vector<DirectEventState>& states,
     // The length variable goes last: every frame the engine overwrites the last variable with the current
     // clip's length before it evaluates the speed expressions (retail lists it last too).
     body.u32(static_cast<std::uint32_t>(1 + variables.size()));
-    for (const auto& variable : variables) body.u32(id32_from_id64(variable.name));
+    for (const auto& variable : variables) body.u32(name_id32(variable.name));
     body.u32(id32_from_id64(kLengthVariable));
     body.u32(static_cast<std::uint32_t>(1 + variables.size()));
     for (const auto& variable : variables) {
@@ -868,14 +890,16 @@ std::vector<std::uint8_t> write_direct_event_state_machine(
     const std::vector<DirectEventSelector>& selectors,
     const std::vector<BoneConstraint>& constraints,
     std::uint32_t bone_count,
-    const std::vector<std::uint32_t>& ragdoll_actor_names) {
+    const std::vector<std::uint32_t>& ragdoll_actor_names,
+    const std::vector<std::string>& declared_events) {
     std::vector<std::uint8_t> body;
     std::string error;
-    if (!make_direct_body(states, transitions, variables, selectors, constraints, bone_count, ragdoll_actor_names, body, error))
+    if (!make_direct_body(states, transitions, variables, selectors, constraints, bone_count, ragdoll_actor_names,
+                          declared_events, body, error))
         throw std::invalid_argument(error);
     auto result = wrap_cooked_resource(kTypeName, resource_name, body);
     if (!validate_direct_event_state_machine(result, resource_name, states, transitions, variables, selectors, error,
-                                             constraints, bone_count, ragdoll_actor_names))
+                                             constraints, bone_count, ragdoll_actor_names, declared_events))
         throw std::logic_error("generated direct-event STATE_MACHINE failed self-validation: " + error);
     return result;
 }
@@ -899,9 +923,11 @@ bool validate_direct_event_state_machine(
     std::string& error,
     const std::vector<BoneConstraint>& constraints,
     std::uint32_t bone_count,
-    const std::vector<std::uint32_t>& ragdoll_actor_names) {
+    const std::vector<std::uint32_t>& ragdoll_actor_names,
+    const std::vector<std::string>& declared_events) {
     std::vector<std::uint8_t> expected_body;
-    if (!make_direct_body(states, transitions, variables, selectors, constraints, bone_count, ragdoll_actor_names, expected_body, error))
+    if (!make_direct_body(states, transitions, variables, selectors, constraints, bone_count, ragdoll_actor_names,
+                          declared_events, expected_body, error))
         return false;
     std::vector<std::uint8_t> actual_body;
     std::string stream_name;

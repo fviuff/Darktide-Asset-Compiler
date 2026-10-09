@@ -500,7 +500,8 @@ bool build_glb_resources(const Scene& source, const app::CompileOptions& options
         const auto machine_key = context.generated_key("state_machine", base);
         auto machine = stingray::write_direct_event_state_machine(
             machine_key.name, states, transitions,
-            plan.state_machine_variables, plan.state_machine_selectors, pendulums, bone_count, ragdoll_actors);
+            plan.state_machine_variables, plan.state_machine_selectors, pendulums, bone_count, ragdoll_actors,
+            plan.state_machine_declared_events);
         graph.owned.push_back({machine_key, base + ".state_machine", std::move(machine),
             {dependencies.begin(), dependencies.end()}});
     }

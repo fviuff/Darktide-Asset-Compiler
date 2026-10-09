@@ -1194,7 +1194,19 @@ bool write_static_tail(BinaryWriter& w, const Scene& scene, const WriteOptions& 
     // u64 list, LOD objects, terrains, unused, joints, movers, unused.
     w.u32(0);
     w.bytes(lod_objects.data(), lod_objects.size());
-    for (int i = 0; i < 5; ++i) w.u32(0);
+    for (int i = 0; i < 3; ++i) w.u32(0);
+    // movers (MoverDesc: name, height, radius, collision filter, slope limit, actor/mover hit callbacks unset)
+    w.u32(static_cast<std::uint32_t>(scene.asset_definition.movers.size()));
+    for (const auto& mover : scene.asset_definition.movers) {
+        w.u32(physics::template_id32(mover.name));
+        w.f32(mover.height);
+        w.f32(mover.radius);
+        w.u32(physics::template_id32(mover.collision_filter));
+        w.f32(mover.slope_limit);
+        w.u32(0xffffffffu);
+        w.u32(0xffffffffu);
+    }
+    w.u32(0);
     // Unit resource +0x2b0: the engine only creates the animation blender and
     // instances the state machine named below when this is set (all retail
     // units that reference a state machine set it).
@@ -1492,6 +1504,50 @@ bool build_unit_v115(const Scene& scene, UnitResource& out, std::string& error, 
         error = "node-bound authored physics requires the native PhysX collection backend";
         return false;
 #endif
+    }
+    for (const auto& definition : scene.asset_definition.node_actors) {
+        // shapes fitted in the node's frame without its scale (actors take the node's position and rotation)
+        const auto index = static_cast<std::size_t>(definition.source_node);
+        Matrix4 frame = scene.nodes[index].world_stingray;
+        for (int axis = 0; axis < 3; ++axis) {
+            const float length = std::sqrt(frame[axis * 4] * frame[axis * 4] + frame[axis * 4 + 1] * frame[axis * 4 + 1] +
+                                           frame[axis * 4 + 2] * frame[axis * 4 + 2]);
+            if (!(length > 1e-8f)) { error = "actor '" + definition.name + "' has a zero scale"; return false; }
+            for (int row = 0; row < 3; ++row) frame[axis * 4 + row] /= length;
+        }
+        std::vector<Primitive> local;
+        for (const auto& primitive : scene.collider_primitives) {
+            if (primitive.collision_object != definition.source_node) continue;
+            Primitive moved;
+            if (!physics::localize_rigid_primitive(primitive, frame, moved, error)) {
+                error = "actor '" + definition.name + "': " + error;
+                return false;
+            }
+            local.push_back(std::move(moved));
+        }
+        physics::FittedActorOptions fit;
+        fit.actor_template = definition.actor_template;
+        fit.shape_template = definition.shape_template;
+        fit.material = definition.material;
+        switch (definition.shape) {
+        case ColliderShape::Sphere: fit.shape = physics::PhysicsShapeType::Sphere; break;
+        case ColliderShape::Box: fit.shape = physics::PhysicsShapeType::Box; break;
+        case ColliderShape::Capsule: fit.shape = physics::PhysicsShapeType::Capsule; break;
+        case ColliderShape::Convex: fit.shape = physics::PhysicsShapeType::Convex; break;
+        case ColliderShape::Geometry: fit.shape = physics::PhysicsShapeType::TriangleMesh; break;
+        }
+        const auto& node_name = scene.nodes[index].name;
+        physics::PhysicsActor actor;
+        if (!physics::build_actor(local, definition.name, node_name.empty() ? definition.name : node_name,
+                                  source_node_hashes[index], fit, actor, error)) {
+            error = "actor '" + definition.name + "': " + error;
+            return false;
+        }
+        actor.name_hash = physics::template_id32(definition.name);
+        actor.enabled = definition.spawn;
+        std::vector<std::uint8_t> record;
+        if (!physics::serialize_actor(actor, record, error)) return false;
+        actor_records.push_back(std::move(record));
     }
     std::vector<LodObject> lods;
     std::vector<bool> in_lod;

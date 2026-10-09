@@ -58,6 +58,8 @@ bool configure_oodle(const std::filesystem::path& dll_or_game_directory, std::st
 
 // Oodle Kraken compression with the game's DLL (checked by unpacking it again).
 bool oodle_compress(const std::vector<std::uint8_t>& input, std::vector<std::uint8_t>& packed, std::string& error);
+// Oodle decompression with the game's DLL; output is sized to the unpacked size beforehand.
+bool oodle_decompress(const std::vector<std::uint8_t>& packed, std::vector<std::uint8_t>& output, std::string& error);
 
 // The Darktide install (DARKTIDE_GAME_ROOT, else from the configured Oodle DLL, else the default Steam folder).
 // Empty when unknown. Retail shader materials are read from <root>/bundle at compile time.
@@ -82,5 +84,11 @@ bool encode_texture_like(const ImageRGBA& source, const std::vector<std::uint8_t
                          std::vector<std::uint8_t>& body, std::string& error);
 
 bool inspect_texture_blob(const std::vector<std::uint8_t>& blob, std::string& report, std::string& error);
+
+// The largest mip a game texture body holds itself (the streamed mips live in a separate file), as 8-bit RGBA
+// holding the stored values (sRGB formats stay sRGB encoded; *srgb says which).
+bool texture_body_image(const std::vector<std::uint8_t>& body, ImageRGBA& out, std::string& error, bool* srgb = nullptr);
+
+bool write_png(const ImageRGBA& image, const std::filesystem::path& path, std::string& error);
 
 } // namespace dtglb::stingray::texture

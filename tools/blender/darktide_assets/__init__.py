@@ -10,16 +10,24 @@ import copy
 import re
 import math
 import struct
+import fnmatch
 
 import bpy
 import bmesh
 from mathutils import Matrix, Vector
-from bpy.props import BoolProperty, CollectionProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty, StringProperty
+from bpy.props import BoolProperty, CollectionProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, PointerProperty, StringProperty
 from .reference_skeleton import ReferenceSkeletonError, load_reference, _murmur64
 from . import fit_skeleton
+from .skeleton_presets import SKELETON_PRESET_LIST, SKELETON_PRESETS
 from . import game_unit
+from . import game_state_machine
+from . import state_graph
+from . import breed
 from . import particle_effect
+from . import particle_preview
+from . import state_machine_preview
 from . import flow_editor
+from . import pmx
 
 
 SCHEMA_KEY = "darktide_asset"
@@ -44,9 +52,62 @@ def _enum(items, default):
     return EnumProperty(items=[(v, v.title(), "") for v in items], default=default)
 
 
+_BREED_ITEMS = []
+
+
+def _breed_items():
+    if not _BREED_ITEMS:
+        _BREED_ITEMS.extend((name, name, entry["base_unit"]) for name, entry in sorted(breed.breeds().items()))
+    return _BREED_ITEMS
+
+
+_ZONE_ITEMS = []
+
+
+def _zone_items():
+    if not _ZONE_ITEMS:
+        _ZONE_ITEMS.append(("auto", "From the game breed", "The zone the game breed gives this actor's name"))
+        _ZONE_ITEMS.extend((zone, zone.replace("_", " ").capitalize(), "") for zone in breed.zone_names())
+    return _ZONE_ITEMS
+
+
+# Dropdowns that show states, clips and variables by name while the graph keeps their numbers. Blender needs the
+# item lists kept alive while a dropdown is open.
+_PICK_ITEMS = {}
+
+
+def _graph_options(context):
+    scene = context.scene if context else bpy.context.scene
+    return _asset_options(scene) if scene else None
+
+
+def _pick_items(kind, context):
+    options = _graph_options(context)
+    names = []
+    if options is not None:
+        if kind == "state":
+            names = [state.state_name for state in options.state_graph_states]
+        elif kind == "variable":
+            names = [variable.variable_name for variable in options.state_graph_variables]
+        else:
+            clips = state_graph.clip_names(options)
+            names = [clips.get(number, "clip " + str(number)) for number in range(max(clips) + 1)] if clips else []
+    items = [(str(number), "%d  %s" % (number, name), "", number) for number, name in enumerate(names)]
+    if not items:
+        items = [("0", "0  (Inspect Asset to see clip names)" if kind == "clip" else "0", "", 0)]
+    _PICK_ITEMS[kind] = items
+    return items
+
+
+def _picker(kind, field, name, description=""):
+    return EnumProperty(name=name, description=description, items=lambda self, context: _pick_items(kind, context),
+                        get=lambda self: getattr(self, field), set=lambda self, value: setattr(self, field, value))
+
+
 class DarktideAnimationState(bpy.types.PropertyGroup):
     state_name: StringProperty(name="State name", default="State")
     clip_index: IntProperty(name="Clip index", default=0, min=0)
+    clip_pick: _picker("clip", "clip_index", "Clip", "The action this state plays")
     playback: EnumProperty(name="Playback", items=[
         ("loop", "Loop", "Repeat this clip"),
         ("once", "Play once", "Play this clip without looping"),
@@ -56,13 +117,17 @@ class DarktideAnimationState(bpy.types.PropertyGroup):
     blend_variable: IntProperty(name="Variable", default=0, min=0,
                                 description="Index of the float variable that picks the mix")
     blend_clips: StringProperty(name="Clips", default="0:0, 1:1",
-                                description="clip:value pairs. A clip plays fully when the variable equals its value "
-                                            "and fades into the clips next to it, e.g. 0:0, 1:1, 2:3. With 2D on, "
-                                            "clip:x:y, e.g. 0:0:0, 1:1:0, 2:-1:0, 3:0:1")
+                                description="clip:value pairs, the clip by its name or number. A clip plays fully "
+                                            "when the variable equals its value and fades into the clips next to it, "
+                                            "e.g. walk:1, run:2. With 2D on, clip:x:y, e.g. idle:0:0, right:1:0, "
+                                            "left:-1:0, forward:0:1")
     blend_2d: BoolProperty(name="2D", default=False,
                            description="Blend by two variables at once, e.g. strafing: x sideways, y forward")
     blend_variable2: IntProperty(name="Variable Y", default=1, min=0,
                                  description="Index of the float variable for the second direction")
+    blend_variable_pick: _picker("variable", "blend_variable", "Variable", "The float variable that picks the mix")
+    blend_variable2_pick: _picker("variable", "blend_variable2", "Variable Y",
+                                  "The float variable for the second direction")
     random: BoolProperty(name="Random", default=False,
                          description="Play one of several clips picked at random (idle variations and the like); "
                                      "Clips lists them as clip:weight, e.g. 0:3, 1:1 plays clip 0 three times as often")
@@ -76,6 +141,8 @@ class DarktideAnimationState(bpy.types.PropertyGroup):
                                       description="Play at the speed a float variable holds, which your mod sets")
     speed_variable: IntProperty(name="Speed variable", default=0, min=0,
                                 description="Index of the float variable that sets the playback speed")
+    speed_variable_pick: _picker("variable", "speed_variable", "Speed variable",
+                                 "The float variable that sets the playback speed")
     layer: IntProperty(name="Layer", default=0, min=0,
                        description="0 is the base layer. Higher layers play on top of it, each starting in its first "
                                    "state; transitions stay inside a layer and an event reaches every layer")
@@ -104,11 +171,18 @@ class DarktideAnimationVariable(bpy.types.PropertyGroup):
     initial_value: FloatProperty(name="Initial value", default=0.0)
     minimum: FloatProperty(name="Minimum", default=0.0)
     maximum: FloatProperty(name="Maximum", default=1.0)
+    preview_value: FloatProperty(name="Preview value", default=0.0,
+                                 description="The variable's value while Play State Machine runs")
 
 
 class DarktideAnimationTransition(bpy.types.PropertyGroup):
     from_state: IntProperty(name="From state index", default=0, min=0)
+    from_any: BoolProperty(name="From any state", default=False,
+                           description="Take this transition from every state of the target's layer (a transition "
+                                       "of a state's own for the same event wins)")
     to_state: IntProperty(name="To state index", default=0, min=0)
+    from_pick: _picker("state", "from_state", "From")
+    to_pick: _picker("state", "to_state", "To")
     event_name: StringProperty(name="Event name")
     blend_seconds: FloatProperty(name="Blend seconds", default=0.0, min=0.0)
     condition: EnumProperty(name="Condition", items=[
@@ -116,18 +190,13 @@ class DarktideAnimationTransition(bpy.types.PropertyGroup):
         ("range", "Variable range", "Choose this transition when a float variable falls inside its range"),
     ], default="always")
     variable_index: IntProperty(name="Variable index", default=0, min=0)
+    variable_pick: _picker("variable", "variable_index", "Variable")
     lower: FloatProperty(name="Lower bound", default=0.0)
     upper: FloatProperty(name="Upper bound", default=1.0)
     lower_exclusive: BoolProperty(name="Exclude lower bound", default=False)
     upper_exclusive: BoolProperty(name="Exclude upper bound", default=False)
 
 
-SKELETON_PRESETS = {
-    "human": "content/characters/player/human/third_person/base",
-    "ogryn": "content/characters/player/ogryn/third_person/base",
-    "traitor_guard": "content/characters/enemy/chaos_traitor_guard/third_person/base",
-    "flamer": "content/characters/enemy/chaos_traitor_guard/third_person/flamer_base",
-}
 
 
 def apply_skeleton_preset(identity, folder, key):
@@ -135,7 +204,7 @@ def apply_skeleton_preset(identity, folder, key):
     resource = SKELETON_PRESETS[key]
     folder = bpy.path.abspath(folder.strip()) if folder else ""
     if not folder or not os.path.isdir(folder):
-        raise ValueError("Set 'Game extract folder' to a directory of extracted <hash>.unit/.bones files")
+        raise ValueError("Set 'Game files extract' in the Setup panel to your limn extract")
     stem = "%016x" % _murmur64(resource)
     unit = os.path.join(folder, stem + ".unit")
     bones = os.path.join(folder, stem + ".bones")
@@ -152,7 +221,7 @@ def _skeleton_preset_changed(self, context):
     if self.skeleton_preset == "custom":
         return
     try:
-        apply_skeleton_preset(self, context.scene.dt_asset.game_extract_folder, self.skeleton_preset)
+        apply_skeleton_preset(self, prefs().game_extract_folder, self.skeleton_preset)
         fit_skeleton.refresh_reference_names(self)
     except ValueError as exc:
         self.skeleton_preset_status = str(exc)
@@ -166,11 +235,26 @@ def _default_game_folder():
     return ""
 
 
-class DarktideSceneSettings(bpy.types.PropertyGroup):
+class DarktidePreferences(bpy.types.AddonPreferences):
+    """Paths that belong to this computer, not to a .blend: set once for every project."""
+    bl_idname = __package__
+
+    compiler: StringProperty(name="Compiler", subtype="FILE_PATH", description="DarktideGLBCompiler.exe")
     game_folder: StringProperty(name="Darktide folder", subtype="DIR_PATH", default=_default_game_folder(),
-                                description="Game install folder (holds bundle/); game shaders are read from it")
-    game_extract_folder: StringProperty(name="Game extract folder", subtype="DIR_PATH",
-                                        description="Directory of limn-extracted <16hex>.<ext> files, used by skeleton presets")
+                                description="The game's install folder (the one with binaries and bundle in it)")
+    game_extract_folder: StringProperty(name="Game files extract", subtype="DIR_PATH",
+                                        description="Folder of game files extracted with limn: skeletons, game effects, "
+                                                    "the game unit panel and game textures read from it")
+
+    def draw(self, context):
+        draw_setup(self.layout, context)
+
+
+def prefs():
+    return bpy.context.preferences.addons[__package__].preferences
+
+
+class DarktideSceneSettings(bpy.types.PropertyGroup):
     game_unit: StringProperty(name="Game unit",
                               description="Resource path of a game unit whose nodes you need (attach, effect and animated "
                                           "nodes): a piece of gear, a weapon part, a prop, a character")
@@ -182,7 +266,6 @@ class DarktideSceneSettings(bpy.types.PropertyGroup):
     actor: EnumProperty(name="Body behavior", items=ACTOR_ITEMS, default="static")
     mass: FloatProperty(name="Mass", default=2.0, min=0.0)
     material: _enum(("default", "iron", "rubber"), "default")
-    compiler: StringProperty(name="Compiler", subtype="FILE_PATH")
     output_path: StringProperty(name="Output path", subtype="DIR_PATH")
     asset_filename: StringProperty(name="Asset filename", default="asset")
     asset_path: StringProperty(name="Resource path", description="Stable extensionless identity, e.g. content/mods/my_mod/trolley; blank uses the GLB filename")
@@ -251,6 +334,8 @@ class DarktideSceneSettings(bpy.types.PropertyGroup):
     state_graph_states: CollectionProperty(type=DarktideAnimationState)
     state_graph_variables: CollectionProperty(type=DarktideAnimationVariable)
     state_graph_transitions: CollectionProperty(type=DarktideAnimationTransition)
+    state_graph_game_events: StringProperty(name="Game events", default="")
+    state_graph_game_events_source: StringProperty(name="Game events from", default="")
     animation_translation_tolerance: FloatProperty(name="Translation tolerance", default=1e-4, min=1e-12, precision=8)
     animation_scale_tolerance: FloatProperty(name="Scale tolerance", default=1e-4, min=1e-12, precision=8)
     animation_rotation_tolerance_radians: FloatProperty(name="Rotation tolerance (radians)", default=1e-3, min=1e-12, precision=8)
@@ -265,12 +350,8 @@ class DarktideCollectionSettings(bpy.types.PropertyGroup):
     reference_bones: StringProperty(name="Reference BONES", subtype="FILE_PATH")
     skeleton_resource: StringProperty(name="Skeleton resource", description="Extensionless native skeleton resource identity")
     skeleton_preset: EnumProperty(name="Preset", default="custom", update=_skeleton_preset_changed, items=[
-        ("custom", "Custom", "Enter the reference paths manually"),
-        ("human", "Human", SKELETON_PRESETS["human"]),
-        ("ogryn", "Ogryn player", SKELETON_PRESETS["ogryn"]),
-        ("traitor_guard", "Traitor guard", SKELETON_PRESETS["traitor_guard"]),
-        ("flamer", "Flamer", SKELETON_PRESETS["flamer"]),
-    ])
+        ("custom", "Custom", "Enter the reference paths manually")] +
+        [(key, label, resource) for key, label, resource in SKELETON_PRESET_LIST])
     skeleton_preset_status: StringProperty(name="Preset status", default="")
     bone_map: CollectionProperty(type=fit_skeleton.DarktideBoneMapRow)
     bone_map_index: IntProperty(default=0)
@@ -312,6 +393,13 @@ class DarktideCollectionSettings(bpy.types.PropertyGroup):
                     "build.log lists each clip's speed for moving the unit from your mod",
         default=False,
     )
+    root_motion: BoolProperty(
+        name="Root motion",
+        description="Move the forward travel of walk/run clips from the hips onto root_point, where the game reads "
+                    "it as the character's movement (its own characters and enemies work that way). "
+                    "build.log lists each clip's speed",
+        default=False,
+    )
     flow_tree: PointerProperty(
         name="Flow", type=bpy.types.NodeTree, poll=lambda self, tree: tree.bl_idname == flow_editor.TREE,
         description="The unit's flow (Darktide Flow node tree in the node editor): what happens when it spawns or "
@@ -351,11 +439,66 @@ class DarktideCollectionSettings(bpy.types.PropertyGroup):
     state_graph_states: CollectionProperty(type=DarktideAnimationState)
     state_graph_variables: CollectionProperty(type=DarktideAnimationVariable)
     state_graph_transitions: CollectionProperty(type=DarktideAnimationTransition)
+    state_graph_game_events: StringProperty(
+        name="Game events", default="",
+        description="Every event a game character's scripts send (Import Game Events); the state machine lists them "
+                    "all, since the game stops on an event it doesn't know. Events no transition takes do nothing")
+    state_graph_game_events_source: StringProperty(name="Game events from", default="")
     animation_translation_tolerance: FloatProperty(name="Translation tolerance", description="Maximum measured translation error for fitted animation", default=1e-4, min=1e-12, precision=8)
     animation_scale_tolerance: FloatProperty(name="Scale tolerance", description="Maximum measured scale error for fitted animation", default=1e-4, min=1e-12, precision=8)
     animation_rotation_tolerance_radians: FloatProperty(name="Rotation tolerance (radians)", description="Maximum measured angular error for fitted animation", default=1e-3, min=1e-12, precision=8)
     animation_fit_advanced: BoolProperty(name="Show animation fit controls", default=False)
     inspection_summary: StringProperty(name="Last source inspection", default="")
+    use_mover: BoolProperty(
+        name="Mover",
+        description="Give the unit a mover: the upright capsule that walks a character through the level and keeps it "
+                    "out of walls (the game's characters and enemies have one named mover)",
+        default=False,
+    )
+    mover_height: FloatProperty(name="Height", default=1.8, min=0.01, subtype="DISTANCE")
+    mover_radius: FloatProperty(name="Radius", default=0.4, min=0.01, subtype="DISTANCE")
+    mover_slope: FloatProperty(name="Max slope", default=0.6981317, min=0.0, max=1.5707963, subtype="ANGLE",
+                               description="Steepest ground it walks up")
+    mover_filter: StringProperty(name="Collides with", default="filter_minion_mover",
+                                 description="The game's collision filter for it: filter_minion_mover for enemies, "
+                                             "filter_player_mover for player characters")
+    unit_package: BoolProperty(
+        name="Package named like the unit",
+        description="Load the asset as a package with the asset's own resource path, like the game's units. An enemy "
+                    "body needs it: the game loads a breed's base unit as a package of that name when a mission loads "
+                    "(Make a breed always does it)",
+        default=False,
+    )
+    make_breed: BoolProperty(
+        name="Make a breed (EXPERIMENTAL)",
+        description="Write a Lua file next to the compiled asset that adds an enemy of its own to the game: it behaves "
+                    "like the game breed you pick, with this asset as its body",
+        default=False,
+    )
+    breed_name: StringProperty(name="Name", default="my_enemy",
+                               description="The new breed's name, lowercase (what your mod spawns it by)")
+    breed_base: EnumProperty(name="Behaves like", items=lambda self, context: _breed_items(),
+                             description="The game breed whose scripts drive it: behaviour, attacks, sounds, "
+                                         "staggers")
+    breed_body: EnumProperty(
+        name="Body",
+        items=(
+            ("own", "Own body", "Your model is the whole body: the game breed's weapons are hung on it, its other body "
+                                "pieces are left off, and so are its wounds, gibbing and dissolving (they work on those "
+                                "pieces)"),
+            ("game", "Game body pieces too", "The game breed's body pieces, wounds and gibbing on top of your model, "
+                                             "like the game's own enemy"),
+        ),
+        default="own",
+    )
+    breed_health: StringProperty(name="Health", default="",
+                                 description="One number (health on the easiest difficulty, the others scaled like "
+                                             "the game breed's) or five, one per difficulty. Empty keeps the game "
+                                             "breed's")
+    breed_walk_speed: FloatProperty(name="Walk speed", default=0.0, min=0.0,
+                                    description="Metres per second, 0 keeps the game breed's")
+    breed_run_speed: FloatProperty(name="Run speed", default=0.0, min=0.0,
+                                   description="Metres per second, 0 keeps the game breed's")
 
 
 _GAME_SHADERS = None
@@ -398,6 +541,86 @@ def _parse_assignments(text, what):
     return result
 
 
+_TEXTURE_SOURCES = (
+    ("game", "Game's texture", "Keep the texture the game's material has in this slot"),
+    ("base_color", "Base Color", "The image plugged into Base Color on this material"),
+    ("normal", "Normal", "The image behind the Normal Map node on this material"),
+    ("orm", "ORM", "The occlusion / roughness / metallic image of this material"),
+    ("emissive", "Emission", "The image plugged into Emission on this material"),
+)
+
+
+class DarktideShaderValue(bpy.types.PropertyGroup):
+    """One setting of a game shader, like a row of the Stingray property editor."""
+    floats: IntProperty(default=1, min=1, max=4)
+    is_color: BoolProperty(default=False)
+    changed: BoolProperty(name="Change", default=False,
+                          description="Use your own value for this setting (unticked keeps the game's)")
+    value: FloatVectorProperty(name="Value", size=4)
+    color: FloatVectorProperty(name="Color", size=4, subtype="COLOR", min=0.0, soft_max=1.0)
+
+
+class DarktideShaderTexture(bpy.types.PropertyGroup):
+    source: EnumProperty(name="Image", items=_TEXTURE_SOURCES, default="game",
+                         description="Which image goes into this texture slot")
+
+
+def _shader_rows(settings):
+    """Fill the settings and texture rows from the picked game shader; typed values from older files carry over."""
+    preset = _game_shaders().get(settings.game_shader)
+    if not preset:
+        return
+    kept = {row.name: (row.changed, list(row.value), list(row.color)) for row in settings.shader_value_rows}
+    try:
+        typed = _parse_assignments(settings.shader_values, "numbers")
+    except ValueError:
+        typed = {}
+    settings.shader_value_rows.clear()
+    for variable in preset["variables"]:
+        row = settings.shader_value_rows.add()
+        row.name, row.floats = variable["name"], variable["floats"]
+        row.is_color = "color" in variable["name"] and variable["floats"] >= 3
+        default = (list(variable["default"]) + [0.0] * 4)[:4]
+        row.value = default
+        row.color = default[:3] + [default[3] if variable["floats"] == 4 else 1.0]
+        if variable["name"] in typed:
+            numbers = typed.pop(variable["name"])
+            numbers = numbers if isinstance(numbers, list) else [numbers]
+            numbers = (numbers + default[len(numbers):])[:4]
+            row.changed, row.value, row.color = True, numbers, numbers
+        elif variable["name"] in kept:
+            row.changed, row.value, row.color = kept[variable["name"]]
+    kept_textures = {row.name: row.source for row in settings.shader_texture_rows}
+    try:
+        typed_textures = _parse_assignments(settings.shader_textures, "words")
+    except ValueError:
+        typed_textures = {}
+    settings.shader_texture_rows.clear()
+    for slot in preset["textures"]:
+        row = settings.shader_texture_rows.add()
+        row.name = slot
+        row.source = typed_textures.pop(slot, None) or kept_textures.get(slot, "game")
+    # typed names this shader's list doesn't have stay typed (Other settings)
+    settings.shader_values = "; ".join("%s=%s" % (name, ",".join("%g" % v for v in (value if isinstance(value, list) else [value])))
+                                       for name, value in typed.items())
+    settings.shader_textures = "; ".join("%s=%s" % item for item in typed_textures.items())
+
+
+def _shader_assignments(settings):
+    """(variables, textures) for the compiler from the rows, plus typed values of an older file whose rows were never
+    built."""
+    variables = _parse_assignments(settings.shader_values, "numbers")
+    textures = _parse_assignments(settings.shader_textures, "words")
+    for row in settings.shader_value_rows:
+        if row.changed:
+            numbers = list(row.color if row.is_color else row.value)[:row.floats]
+            variables[row.name] = numbers[0] if row.floats == 1 else numbers
+    for row in settings.shader_texture_rows:
+        if row.source != "game":
+            textures[row.name] = row.source
+    return variables, textures
+
+
 class DarktideMaterialSettings(bpy.types.PropertyGroup):
     mode: EnumProperty(name="Material intent", default="generated", items=[
         ("generated", "Generated from glTF PBR", "Build a Darktide material from this material's glTF PBR values"),
@@ -406,7 +629,10 @@ class DarktideMaterialSettings(bpy.types.PropertyGroup):
         ("game_shader", "Game shader", "Use one of the game's own shaders (glass, water, hologram, glow, fur...) with your values"),
     ])
     game_shader: EnumProperty(name="Shader", items=_game_shader_items,
-                              description="Game shader to copy; its settings and texture channels are listed below")
+                              update=lambda self, context: _shader_rows(self),
+                              description="Game shader to copy; its settings and texture slots are listed below")
+    shader_value_rows: CollectionProperty(type=DarktideShaderValue)
+    shader_texture_rows: CollectionProperty(type=DarktideShaderTexture)
     shader_values: StringProperty(name="Values", description="Variables to change, e.g. color=1,0.2,0.1; opacity=0.8")
     shader_textures: StringProperty(name="Textures",
                                     description="Texture channels to fill from this material's glTF images, "
@@ -505,8 +731,36 @@ class DarktideColliderSettings(bpy.types.PropertyGroup):
     shape: EnumProperty(name="Collision geometry", default="geometry", items=[
         ("geometry", "Mesh surface", "Use this mesh's triangle surface for static/keyframed bodies"),
         ("convex", "Convex mesh", "Use a convex hull of this authored mesh for a simulated body"),
+        ("capsule", "Capsule", "A capsule fitted to this mesh along its longest axis (bodies of their own)"),
+        ("sphere", "Sphere", "A sphere fitted to this mesh (bodies of their own)"),
+        ("box", "Box", "A box fitted to this mesh (bodies of their own)"),
     ])
     role: _enum(("render", "collision", "both"), "render")
+    unit_actor: EnumProperty(name="Own actor", default="none", items=[
+        ("none", "None", "A normal mesh"),
+        ("hit_zone", "Hit zone (EXPERIMENTAL)", "An enemy hit zone: shots and swings land on it, it follows the bone it's parented "
+                                 "to while the character animates. Breeds list their hit zones by these names"),
+        ("custom", "Other", "An actor of its own with the physics templates you type in"),
+    ], description="Turn this mesh into a collision actor of its own, named after the object (not drawn)")
+    actor_name: StringProperty(name="Actor name", description="Name scripts find it by (empty = the object's name)")
+    actor_shape: EnumProperty(name="Shape", default="capsule", items=[
+        ("capsule", "Capsule", "Fitted along the mesh's longest axis"),
+        ("sphere", "Sphere", ""),
+        ("box", "Box", ""),
+        ("convex", "Convex", "A convex hull of the mesh"),
+        ("geometry", "Mesh surface", "The triangles themselves (not for simulated bodies)"),
+    ])
+    actor_template: StringProperty(name="Actor template", default="keyframed",
+                                   description="physics_properties actor template: static, dynamic, keyframed, "
+                                               "or #1234abcd for one only known by its hash")
+    actor_shape_template: StringProperty(name="Shape template", default="default",
+                                         description="physics_properties shape template (what it collides with), "
+                                                     "or #1234abcd")
+    actor_spawn: BoolProperty(name="Created at spawn", default=True,
+                              description="Off leaves it to a script (Unit.create_actor)")
+    hit_zone_group: EnumProperty(name="Hit zone group (EXPERIMENTAL)", items=lambda self, context: _zone_items(),
+                                 description="Which part of the body a hit here counts as (head takes headshots) "
+                                             "in a breed you make")
     use_asset_collision: BoolProperty(
         name="Use as asset collision",
         description="When the asset uses visible mesh collision, include this mesh as a collider",
@@ -714,7 +968,11 @@ def _validate_state_graph(options):
                 not variable.minimum <= variable.initial_value <= variable.maximum):
             raise ValueError("Variable " + str(index) + " needs finite ordered bounds containing its initial value")
     event_bindings = {}
-    for index, transition in enumerate(options.state_graph_transitions):
+    for transition in options.state_graph_transitions:
+        if "*" in transition.event_name and not any(fnmatch.fnmatchcase(event, transition.event_name.strip())
+                                                    for event in state_graph.known_events(options)):
+            raise ValueError("No event matches " + transition.event_name.strip())
+    for index, transition in enumerate(state_graph.expand(options)):
         if transition.from_state >= len(states) or transition.to_state >= len(states):
             raise ValueError("Transition " + str(index) + " refers to a missing state")
         if not transition.event_name.strip():
@@ -737,6 +995,8 @@ def _validate_state_graph(options):
 
 
 def _collider_role(obj, include_visible=False):
+    if obj.dt_collider.unit_actor != "none":
+        return "render"     # an actor's mesh is its shape, the compiler takes it out
     role = obj.dt_collider.role
     if role == "render" and include_visible and obj.dt_collider.use_asset_collision:
         return "both"
@@ -753,7 +1013,28 @@ def _authored_objects(objects, include_visible=False):
             o.dt_collider.visibility_group.strip() or o.dt_collider.lod_group.strip() or
             not o.dt_collider.render_visible or not o.dt_collider.render_shadow or
             (o.type == "EMPTY" and o.dt_particles.enabled) or (o.type == "LIGHT" and o.data.use_shadow) or
-            (o.type == "MESH" and _collider_role(o, include_visible) != "render")]
+            (o.type == "MESH" and _collider_role(o, include_visible) != "render") or
+            (o.type == "MESH" and o.dt_collider.unit_actor != "none")]
+
+
+def _actor_extras(obj):
+    settings = obj.dt_collider
+    hit_zone = settings.unit_actor == "hit_zone"
+    result = {
+        "name": settings.actor_name.strip() or obj.name,
+        "template": game_unit.HIT_ZONE_TEMPLATE if hit_zone else settings.actor_template.strip(),
+        "shape_template": game_unit.HIT_ZONE_SHAPE_TEMPLATE if hit_zone else settings.actor_shape_template.strip(),
+        "shape": settings.actor_shape,
+        "spawn": settings.actor_spawn,
+    }
+    if not result["template"] or not result["shape_template"]:
+        raise ValueError(obj.name + ": an actor needs an actor template and a shape template")
+    return result
+
+
+def _mover_extras(options):
+    return {"height": options.mover_height, "radius": options.mover_radius, "slope_limit": options.mover_slope,
+            "collision_filter": options.mover_filter.strip() or "filter_minion_mover"}
 
 
 def _resolve_ids(objects, include_visible=False):
@@ -910,10 +1191,10 @@ def _suggest_stem(name):
     return re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_") or "asset"
 
 
-def _compiler_path(settings):
-    if not settings.compiler.strip():
-        raise ValueError("Set a compiler path before compiling")
-    compiler = bpy.path.abspath(settings.compiler)
+def _compiler_path():
+    if not prefs().compiler.strip():
+        raise ValueError("Set the compiler in the Setup panel first")
+    compiler = bpy.path.abspath(prefs().compiler)
     if not os.path.isfile(compiler):
         raise ValueError("Compiler executable not found: " + compiler)
     return compiler
@@ -946,6 +1227,11 @@ def _windows_path(path, wine_tools):
 
 def _run_compiler(compiler, arguments, wine_tools, **kwargs):
     command = ([wine_tools[0], compiler] if wine_tools else [compiler]) + arguments
+    # the compiler reads the game's files (Oodle, shaders, stub textures) from the Darktide folder of the setup
+    game = prefs().game_folder.strip()
+    if game:
+        kwargs["env"] = dict(kwargs.get("env") or os.environ,
+                             DARKTIDE_GAME_ROOT=_windows_path(os.path.abspath(bpy.path.abspath(game)), wine_tools))
     return subprocess.run(command, **kwargs)
 
 
@@ -1034,9 +1320,16 @@ def _collision_review(scene, objects):
 
 
 def _weighted_bone_sets(objects):
-    """Map each armature to the names of bones with nonzero vertex weights plus all ancestors."""
+    """Map each armature to the names of bones with nonzero vertex weights or objects hung on them (rigid parts,
+    hit zones, ragdoll bodies), plus all ancestors."""
     result = {}
     for obj in objects:
+        if obj.parent is not None and obj.parent.type == "ARMATURE" and obj.parent_type == "BONE":
+            keep = result.setdefault(obj.parent, set())
+            bone = obj.parent.data.bones.get(obj.parent_bone)
+            while bone is not None:
+                keep.add(bone.name)
+                bone = bone.parent
         if obj.type != "MESH":
             continue
         rigs = {mod.object for mod in obj.modifiers if mod.type == "ARMATURE" and mod.object is not None}
@@ -1092,11 +1385,10 @@ def export_asset(context, path, donor_path_converter=None):
             preset = _game_shaders().get(material.dt_material.game_shader)
             if not preset:
                 raise ValueError("Material " + material.name + " needs a game shader")
-            stream = os.path.join(bpy.path.abspath(scene.dt_asset.game_folder), "bundle", *preset["stream"].split("/"))
+            stream = os.path.join(bpy.path.abspath(prefs().game_folder), "bundle", *preset["stream"].split("/"))
             if not os.path.isfile(stream):
                 raise ValueError("Game shader stream not found (set the Darktide folder): " + stream)
-            _parse_assignments(material.dt_material.shader_values, "numbers")
-            _parse_assignments(material.dt_material.shader_textures, "words")
+            _shader_assignments(material.dt_material)
         elif material.dt_material.mode == "donor":
             donor_path = os.path.abspath(bpy.path.abspath(material.dt_material.donor_stream)) if material.dt_material.donor_stream else ""
             if not donor_path or not os.path.isfile(donor_path):
@@ -1159,15 +1451,18 @@ def export_asset(context, path, donor_path_converter=None):
                 obj[SCHEMA_KEY]["render"] = _render_extras(obj.dt_collider)
             if obj.type == "LIGHT" and obj.data.use_shadow and not version2:
                 obj[SCHEMA_KEY]["light"] = {"shadow": True}
+            if obj.type == "MESH" and obj.dt_collider.unit_actor != "none":
+                obj[SCHEMA_KEY]["actor"] = _actor_extras(obj)
             if obj.type == "EMPTY" and obj.dt_particles.enabled:
-                extract = os.path.abspath(bpy.path.abspath(scene.dt_asset.game_extract_folder.strip()))
-                if not scene.dt_asset.game_extract_folder.strip() or not os.path.isdir(extract):
-                    raise ValueError("Particle effects need 'Game extract folder' set to your limn extract")
+                extract = os.path.abspath(bpy.path.abspath(prefs().game_extract_folder.strip()))
+                if not prefs().game_extract_folder.strip() or not os.path.isdir(extract):
+                    raise ValueError("Particle effects need 'Game files extract' in the Setup panel set to your limn extract")
                 obj[SCHEMA_KEY]["particles"] = particle_effect.node_extras(
                     obj, extract, donor_path_converter or (lambda value: value))
         data = _collection_data(scene.dt_asset.asset_collection)
         flow_tree = _asset_options(scene).flow_tree
-        if (flow_tree is not None or data) and objects:
+        use_mover = _asset_options(scene).use_mover
+        if (flow_tree is not None or data or use_mover) and objects:
             holder = objects[0]
             if SCHEMA_KEY not in holder:
                 if not holder.dt_collider.stable_id.strip():
@@ -1177,6 +1472,8 @@ def export_asset(context, path, donor_path_converter=None):
                 holder[SCHEMA_KEY]["flow"] = json.dumps(flow_editor.description(flow_tree))
             if data:
                 holder[SCHEMA_KEY]["data"] = json.dumps(data)
+            if use_mover:
+                holder[SCHEMA_KEY]["mover"] = _mover_extras(_asset_options(scene))
         for obj in objects:
             if obj.type != "ARMATURE":
                 continue
@@ -1219,9 +1516,9 @@ def export_asset(context, path, donor_path_converter=None):
                     "version": 1,
                     "mode": "game_shader",
                     "stream": (donor_path_converter or (lambda value: value))(os.path.join(
-                        os.path.abspath(bpy.path.abspath(scene.dt_asset.game_folder)), "bundle", *preset["stream"].split("/"))),
-                    "variables": _parse_assignments(material.dt_material.shader_values, "numbers"),
-                    "textures": _parse_assignments(material.dt_material.shader_textures, "words"),
+                        os.path.abspath(bpy.path.abspath(prefs().game_folder)), "bundle", *preset["stream"].split("/"))),
+                    "variables": _shader_assignments(material.dt_material)[0],
+                    "textures": _shader_assignments(material.dt_material)[1],
                     # the materials holding the compiled shaders; the compiler ships copies of them
                     "shader_streams": preset.get("shader_streams", {}),
                 }
@@ -1320,7 +1617,7 @@ class DARKTIDE_OT_inspect(bpy.types.Operator):
         settings = context.scene.dt_asset
         options = _asset_options(context.scene)
         try:
-            compiler = _compiler_path(settings)
+            compiler = _compiler_path()
             wine_tools = _wine_tools(compiler)
             stem = _asset_stem(options.asset_filename)
             output_dir = bpy.path.abspath(settings.output_path or "//")
@@ -1389,8 +1686,18 @@ class DARKTIDE_OT_build(bpy.types.Operator):
         if reference_bones and not os.path.isfile(bpy.path.abspath(reference_bones)):
             self.report({"ERROR"}, "Reference BONES file not found: " + bpy.path.abspath(reference_bones))
             return {"CANCELLED"}
+        breed_lua = None
+        if options.make_breed:
+            try:
+                if not asset_path:
+                    raise ValueError("A breed needs the asset's resource path (its body)")
+                breed_lua = breed.lua(options, asset_path, [obj for obj in collection.all_objects
+                                                            if obj.type == "MESH" and obj.dt_collider.unit_actor != "none"])
+            except ValueError as exc:
+                self.report({"ERROR"}, str(exc))
+                return {"CANCELLED"}
         try:
-            compiler = _compiler_path(settings)
+            compiler = _compiler_path()
             wine_tools = _wine_tools(compiler)
             stem = _asset_stem(options.asset_filename)
             output_dir = bpy.path.abspath(settings.output_path or "//")
@@ -1439,11 +1746,15 @@ class DARKTIDE_OT_build(bpy.types.Operator):
                 command.extend(["--simple-clip", str(options.simple_animation_clip)])
             if options.ragdoll_event.strip() and options.output_kind == "all":
                 command.extend(["--ragdoll-event", options.ragdoll_event.strip()])
-            if options.in_place and options.output_kind != "model":
+            if (options.unit_package or options.make_breed) and asset_path:
+                command.extend(["--package-name", asset_path])
+            if options.root_motion and options.output_kind != "model":
+                command.append("--root-motion")
+            elif options.in_place and options.output_kind != "model":
                 command.append("--in-place")
             if options.create_state_graph:
                 for state in options.state_graph_states:
-                    clips = ",".join(part.strip().replace(" ", "") for part in state.blend_clips.split(",") if part.strip())
+                    clips = state_graph.clips_text(options, state.blend_clips)
                     if state.empty:
                         command.extend(["--sm-empty", state.state_name.strip(), str(state.layer)])
                     elif state.random:
@@ -1473,7 +1784,10 @@ class DARKTIDE_OT_build(bpy.types.Operator):
                 for variable in options.state_graph_variables:
                     command.extend(["--sm-variable", variable.variable_name.strip(),
                                     str(variable.initial_value), str(variable.minimum), str(variable.maximum)])
-                for transition in options.state_graph_transitions:
+                game_events = state_graph.game_events(options)
+                if game_events:
+                    command.extend(["--sm-declare-events", ",".join(game_events)])
+                for transition in state_graph.expand(options):
                     if transition.condition == "range":
                         command.extend(["--sm-range-transition", str(transition.from_state),
                                         str(transition.to_state), transition.event_name.strip(),
@@ -1491,6 +1805,12 @@ class DARKTIDE_OT_build(bpy.types.Operator):
                                 _windows_path(bpy.path.abspath(reference_bones), wine_tools),
                                 "--skeleton-resource",
                                 collection.dt_asset_identity.skeleton_resource.strip()])
+            if sum(len(part) + 3 for part in command) > 8000:
+                # more than a Windows command line holds (big state machines): the arguments go in a file
+                arguments_path = os.path.splitext(glb_path)[0] + ".arguments.txt"
+                with open(arguments_path, "w", encoding="utf-8", newline="\n") as handle:
+                    handle.write("\n".join(command) + "\n")
+                command = ["@" + _windows_path(arguments_path, wine_tools)]
             result = _run_compiler(compiler, command, wine_tools,
                                    capture_output=True, text=True,
                                     timeout=settings.compile_timeout or None, check=False)
@@ -1514,10 +1834,16 @@ class DARKTIDE_OT_build(bpy.types.Operator):
                     gaps = json.load(manifest_file).get("compiler_gaps", [])
                 if gaps:
                     self.report({"WARNING"}, str(gaps[0])[:180] + "; see " + log_path)
+            breed_note = ""
+            if breed_lua is not None:
+                breed_path = os.path.join(output_dir, options.breed_name.strip() + "_breed.lua")
+                with open(breed_path, "w", encoding="utf-8", newline="\n") as handle:
+                    handle.write(breed_lua)
+                breed_note = "; breed in " + breed_path
             if collision_notes:
-                self.report({"WARNING"}, collision_notes[0][:180] + "; see " + log_path)
+                self.report({"WARNING"}, collision_notes[0][:180] + "; see " + log_path + breed_note)
             else:
-                self.report({"INFO"}, "Asset built; see " + log_path)
+                self.report({"INFO"}, "Asset built; see " + log_path + breed_note)
             return {"FINISHED"}
         except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
             with open(log_path, "w", encoding="utf-8") as log:
@@ -1540,10 +1866,10 @@ class DARKTIDE_OT_import_game_unit(bpy.types.Operator):
 
     def execute(self, context):
         settings = context.scene.dt_asset
-        folder = bpy.path.abspath(settings.game_extract_folder.strip())
+        folder = bpy.path.abspath(prefs().game_extract_folder.strip())
         resource = settings.game_unit.strip().lower()
         if not folder or not os.path.isdir(folder):
-            self.report({"ERROR"}, "Set 'Game extract folder' to your limn extract first")
+            self.report({"ERROR"}, "Set 'Game files extract' in the Setup panel to your limn extract first")
             return {"CANCELLED"}
         if not resource:
             self.report({"ERROR"}, "Type the game unit's resource path")
@@ -1558,6 +1884,123 @@ class DARKTIDE_OT_import_game_unit(bpy.types.Operator):
             return {"CANCELLED"}
         note = (", " + str(unknown) + " only known by hash (#...), keep those names as they are") if unknown else ""
         self.report({"INFO"}, "Imported " + str(count) + " nodes into " + collection.name + note)
+        return {"FINISHED"}
+
+
+class DARKTIDE_OT_import_game_collision(bpy.types.Operator):
+    bl_idname = "darktide.import_game_collision"
+    bl_label = "Import Game Collision (EXPERIMENTAL)"
+    bl_description = ("Copy a game unit's hit zones, ragdoll and mover: shape meshes on your rig's bones (by bone "
+                      "name), ragdoll joints with the game's limits, and the mover into this asset's collision settings")
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        settings = context.scene.dt_asset
+        folder = bpy.path.abspath(prefs().game_extract_folder.strip())
+        resource = settings.game_unit.strip().lower()
+        if not folder or not os.path.isdir(folder):
+            self.report({"ERROR"}, "Set 'Game files extract' in the Setup panel to your limn extract first")
+            return {"CANCELLED"}
+        if not resource:
+            self.report({"ERROR"}, "Type the game unit's resource path")
+            return {"CANCELLED"}
+        collection = settings.asset_collection
+        if collection is None:
+            collection = _new_asset_collection(context, set())
+        try:
+            ragdoll = None
+            unit_path = os.path.join(folder, "%016x.unit" % _murmur64(resource))
+            if os.path.isfile(unit_path):
+                # the ragdoll lives in the unit's PhysX collection, which the compiler reads
+                compiler = _compiler_path()
+                wine_tools = _wine_tools(compiler)
+                result = _run_compiler(compiler, ["--physics-collection", _windows_path(unit_path, wine_tools)], wine_tools,
+                                       capture_output=True, text=True, check=False)
+                if result.returncode == 0:
+                    ragdoll = json.loads(result.stdout)
+
+                def decode(meshes):
+                    # cooked convex / triangle shapes, through the compiler's PhysX
+                    path = os.path.join(bpy.app.tempdir or os.path.dirname(unit_path), "darktide_cooked_shapes.bin")
+                    with open(path, "wb") as handle:
+                        for kind, cooked in meshes:
+                            handle.write(struct.pack("<II", kind, len(cooked)) + cooked)
+                    decoded = _run_compiler(compiler, ["--physics-meshes", _windows_path(path, wine_tools)], wine_tools,
+                                            capture_output=True, text=True, check=False)
+                    if decoded.returncode:
+                        raise ValueError("The compiler could not read the game's collision meshes: " +
+                                         (decoded.stderr or "").strip()[:150])
+                    return json.loads(decoded.stdout)
+            else:
+                decode = None
+            count, skipped, mover, bodies, nodes = game_unit.import_collision(context, collection, folder, resource,
+                                                                       _asset_options(context.scene), ragdoll, decode)
+        except (OSError, ReferenceSkeletonError, ValueError, json.JSONDecodeError) as exc:
+            self.report({"ERROR"}, str(exc)[:200])
+            return {"CANCELLED"}
+        text = "Imported " + str(count) + " hit zone and actor shapes"
+        if bodies:
+            text += ", a ragdoll of " + str(bodies) + " bodies (ragdoll event: " + _asset_options(context.scene).ragdoll_event + ")"
+        if mover:
+            text += " and the mover"
+        if nodes:
+            text += ", " + str(nodes) + " of its nodes your rig didn't have"
+        if skipped:
+            text += ", left out " + str(skipped) + " mesh-shaped ones"
+        self.report({"INFO"}, text)
+        return {"FINISHED"}
+
+
+class DARKTIDE_OT_import_game_events(bpy.types.Operator):
+    bl_idname = "darktide.import_game_events"
+    bl_label = "Import Game Events (EXPERIMENTAL)"
+    bl_description = ("List every event and variable of a game unit's state machine (type the unit, e.g. an enemy's "
+                      "base unit, or the state machine itself), so your state machine takes everything the game's "
+                      "scripts for that character send")
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        folder = bpy.path.abspath(prefs().game_extract_folder.strip())
+        resource = context.scene.dt_asset.game_unit.strip().lower()
+        if not folder or not os.path.isdir(folder):
+            self.report({"ERROR"}, "Set 'Game files extract' in the Setup panel to your limn extract first")
+            return {"CANCELLED"}
+        if not resource:
+            self.report({"ERROR"}, "Type the game unit's resource path")
+            return {"CANCELLED"}
+        try:
+            machine, events, variables = game_state_machine.load(folder, resource)
+        except (OSError, ReferenceSkeletonError, ValueError) as exc:
+            self.report({"ERROR"}, str(exc)[:200])
+            return {"CANCELLED"}
+        options = _asset_options(context.scene)
+        options.create_state_graph = True
+        options.state_graph_game_events = ",".join(events)
+        options.state_graph_game_events_source = machine
+        have = {variable.variable_name.strip() for variable in options.state_graph_variables}
+        added = 0
+        for name, default, low, high in variables:
+            if name in have:
+                continue
+            variable = options.state_graph_variables.add()
+            variable.variable_name, variable.initial_value, variable.minimum, variable.maximum = name, default, low, high
+            added += 1
+        unnamed = sum(1 for event in events if event.startswith("#"))
+        self.report({"INFO"}, str(len(events)) + " events (" + str(unnamed) + " only known by hash) and " +
+                    str(added) + " new variables from " + machine)
+        return {"FINISHED"}
+
+
+class DARKTIDE_OT_clear_game_events(bpy.types.Operator):
+    bl_idname = "darktide.clear_game_events"
+    bl_label = "Clear Game Events"
+    bl_description = "Stop listing the imported game events"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        options = _asset_options(context.scene)
+        options.state_graph_game_events = ""
+        options.state_graph_game_events_source = ""
         return {"FINISHED"}
 
 
@@ -1730,6 +2173,43 @@ class DARKTIDE_OT_add_animation_state(bpy.types.Operator):
         states = _asset_options(context.scene).state_graph_states
         state = states.add()
         state.state_name = "State " + str(len(states) - 1)
+        return {"FINISHED"}
+
+
+class DARKTIDE_OT_state_bones_from_selection(bpy.types.Operator):
+    bl_idname = "darktide.state_bones_from_selection"
+    bl_label = "From Selected Bones"
+    bl_description = ("Fill Bones with the bones selected on the asset's rig (pose mode). A bone brings everything "
+                      "below it, so only the topmost selected ones are listed; weights you typed stay")
+    index: IntProperty()
+
+    def execute(self, context):
+        options = _asset_options(context.scene)
+        collection = context.scene.dt_asset.asset_collection
+        rigs = [obj for obj in (collection.all_objects if collection else []) if obj.type == "ARMATURE"]
+        selected = [pose_bone.bone for rig in rigs for pose_bone in rig.pose.bones if pose_bone.select]
+        if not selected:
+            self.report({"ERROR"}, "Select the bones on the rig first (pose mode, click or box select)")
+            return {"CANCELLED"}
+        picked = set(selected)
+        top = [bone for bone in selected if not any(parent in picked for parent in bone.parent_recursive)]
+        state = options.state_graph_states[self.index]
+        weights = {}
+        for entry in state.bones.split(","):
+            name, _, weight = entry.strip().partition(":")
+            if name and weight:
+                weights[name] = weight
+        state.bones = ", ".join(bone.name + (":" + weights[bone.name] if bone.name in weights else "") for bone in top)
+        return {"FINISHED"}
+
+
+class DARKTIDE_OT_load_shader_settings(bpy.types.Operator):
+    bl_idname = "darktide.load_shader_settings"
+    bl_label = "Show Shader Settings"
+    bl_description = "List this game shader's settings and texture slots to edit (values typed in older files carry over)"
+
+    def execute(self, context):
+        _shader_rows(context.object.active_material.dt_material)
         return {"FINISHED"}
 
 
@@ -1990,12 +2470,42 @@ class DARKTIDE_PT_bone_dangle(bpy.types.Panel):
         column.label(text="Skin the swinging mesh to this bone")
 
 
-class DARKTIDE_PT_asset_panel(bpy.types.Panel):
-    bl_label = "Darktide Asset"
-    bl_idname = "DARKTIDE_PT_asset_panel"
+def draw_setup(layout, context):
+    """The paths of this computer (add-on preferences) and the project's output folder."""
+    settings = prefs()
+    layout.prop(settings, "compiler")
+    layout.prop(settings, "game_folder")
+    layout.prop(settings, "game_extract_folder")
+    if context.scene is not None:
+        layout.prop(context.scene.dt_asset, "output_path")
+        layout.prop(context.scene.dt_asset, "compile_timeout")
+
+
+class _SidebarPanel:
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "Darktide"
+
+
+class DARKTIDE_PT_setup(_SidebarPanel, bpy.types.Panel):
+    bl_label = "Setup"
+    bl_idname = "DARKTIDE_PT_setup"
+    bl_order = 0
+
+    def draw(self, context):
+        settings = prefs()
+        layout = self.layout
+        draw_setup(layout, context)
+        if not settings.compiler.strip():
+            layout.label(text="Set the compiler to DarktideGLBCompiler.exe", icon="INFO")
+        if not settings.game_folder.strip():
+            layout.label(text="Set the Darktide folder (textures and game shaders need it)", icon="INFO")
+
+
+class DARKTIDE_PT_asset_panel(_SidebarPanel, bpy.types.Panel):
+    bl_label = "Asset"
+    bl_idname = "DARKTIDE_PT_asset_panel"
+    bl_order = 1
 
     def draw(self, context):
         layout = self.layout
@@ -2003,11 +2513,301 @@ class DARKTIDE_PT_asset_panel(bpy.types.Panel):
         settings = scene.dt_asset
         collection = settings.asset_collection
         options = _asset_options(scene)
+        layout.operator(DARKTIDE_OT_create_asset_collection.bl_idname)
+        if collection and collection.dt_asset_identity.owned_by_addon:
+            layout.operator(DARKTIDE_OT_update_asset_collection.bl_idname)
+        layout.prop(settings, "asset_collection")
+        if collection:
+            layout.prop(collection.dt_asset_identity, "asset_path")
+        else:
+            layout.prop(settings, "asset_path", text="Initial resource path")
+            layout.operator(DARKTIDE_OT_create_asset_collection.bl_idname, text="New Empty Asset")
+            layout.label(text="Create an asset collection before export or compile")
+        layout.prop(options, "asset_filename")
+        layout.prop(options, "scale")
+        layout.prop(options, "weapon_materials")
+        layout.prop(options, "output_kind")
+        if options.output_kind != "model":
+            row = layout.row(align=True)
+            row.prop(options, "select_clip")
+            if options.select_clip:
+                row.prop(options, "clip_index")
+        layout.operator(DARKTIDE_OT_inspect.bl_idname)
+        if options.inspection_summary:
+            inspection = layout.box()
+            inspection.label(text="Compiler source view (last inspection)")
+            for line in options.inspection_summary.splitlines():
+                inspection.label(text=line)
+        layout.operator(DARKTIDE_OT_export_intermediate.bl_idname)
+        layout.operator(DARKTIDE_OT_build.bl_idname)
+
+
+class DARKTIDE_PT_animation(_SidebarPanel, bpy.types.Panel):
+    bl_label = "Animation"
+    bl_idname = "DARKTIDE_PT_animation"
+    bl_order = 2
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        layout = self.layout
+        options = _asset_options(context.scene)
+        if options.output_kind == "model":
+            layout.label(text="Output kind Model leaves the animations out")
+            return
+        simple_row = layout.row(align=True)
+        simple_row.enabled = options.output_kind == "all"
+        simple_row.prop(options, "embed_simple_animation")
+        if options.embed_simple_animation:
+            simple_row.prop(options, "simple_animation_clip", text="Clip")
+        travel_row = layout.row(align=True)
+        travel_row.prop(options, "in_place")
+        travel_row.prop(options, "root_motion")
+        loop_row = layout.row()
+        loop_row.enabled = options.output_kind == "all"
+        loop_row.prop(options, "auto_loop_single_clip")
+        loop_row = layout.row()
+        loop_row.enabled = options.output_kind == "all"
+        loop_row.prop(options, "create_looping_state_machine")
+        graph_row = layout.row()
+        graph_row.enabled = options.output_kind == "all"
+        graph_row.prop(options, "create_state_graph")
+        if options.output_kind != "all":
+            layout.label(text="State machines need Output kind All", icon="ERROR")
+        elif options.create_looping_state_machine and options.create_state_graph:
+            layout.label(text="Choose one animation controller", icon="ERROR")
+        elif options.create_looping_state_machine:
+            row = layout.row(align=True)
+            row.prop(options, "loop_clip_index", text="Clip")
+            row.prop(options, "state_machine_playback", text="")
+        elif options.auto_loop_single_clip and not options.create_state_graph:
+            layout.label(text="A looping controller is added only when the exported GLB has one clip")
+        elif options.create_state_graph:
+            _draw_state_graph(layout, options)
+            state_machine_preview.draw(layout, options)
+        layout.prop(options, "animation_fit_advanced", text="Animation fit settings")
+        if options.animation_fit_advanced:
+            fit = layout.box()
+            fit.prop(options, "animation_translation_tolerance")
+            fit.prop(options, "animation_scale_tolerance")
+            fit.prop(options, "animation_rotation_tolerance_radians")
+
+
+def _draw_state_graph(layout, options):
+    layout.label(text="State 0 is the initial state (higher layers start in their first state)")
+    states = options.state_graph_states
+    for index, state in enumerate(states):
+        state_box = layout.box()
+        row = state_box.row(align=True)
+        row.label(text="State " + str(index))
+        row.prop(state, "state_name", text="")
+        remove = row.operator(DARKTIDE_OT_remove_animation_state.bl_idname, text="", icon="X")
+        remove.index = index
+        row = state_box.row(align=True)
+        row.prop(state, "layer")
+        row.prop(state, "empty")
+        if not state.empty:
+            row.prop(state, "additive")
+            row = state_box.row(align=True)
+            row.prop(state, "bones")
+            pick = row.operator(DARKTIDE_OT_state_bones_from_selection.bl_idname, text="", icon="BONE_DATA")
+            pick.index = index
+            row = state_box.row(align=True)
+            row.prop(state, "blend")
+            row.prop(state, "random")
+        if state.empty:
+            pass
+        elif state.random:
+            row = state_box.row(align=True)
+            row.prop(state, "random_pick", text="")
+            row.prop(state, "playback", text="")
+            state_box.prop(state, "blend_clips")
+        elif state.blend:
+            row.prop(state, "blend_2d")
+            row = state_box.row(align=True)
+            row.prop(state, "blend_variable_pick", text="X" if state.blend_2d else "")
+            if state.blend_2d:
+                row.prop(state, "blend_variable2_pick", text="Y")
+            row.prop(state, "playback", text="")
+            state_box.prop(state, "blend_clips")
+        else:
+            row.prop(state, "clip_pick", text="")
+            row.prop(state, "playback", text="")
+        if not state.empty:
+            row = state_box.row(align=True)
+            row.prop(state, "speed_from_variable", text="Speed from variable")
+            row.prop(state, "speed_variable_pick" if state.speed_from_variable else "speed", text="")
+            state_box.prop(state, "events_at")
+            row = state_box.row(align=True)
+            row.prop(state, "exit_event")
+            if state.exit_event.strip():
+                row.prop(state, "exit_blend")
+    layout.operator(DARKTIDE_OT_add_animation_state.bl_idname, icon="ADD")
+    layout.label(text="Float variables", icon="DRIVER")
+    for index, variable in enumerate(options.state_graph_variables):
+        variable_box = layout.box()
+        row = variable_box.row(align=True)
+        row.label(text="Variable " + str(index))
+        row.prop(variable, "variable_name", text="")
+        remove = row.operator(DARKTIDE_OT_remove_animation_variable.bl_idname, text="", icon="X")
+        remove.index = index
+        variable_box.prop(variable, "initial_value")
+        row = variable_box.row(align=True)
+        row.prop(variable, "minimum")
+        row.prop(variable, "maximum")
+    layout.operator(DARKTIDE_OT_add_animation_variable.bl_idname, icon="ADD")
+    layout.label(text="Transitions", icon="DRIVER_TRANSFORM")
+    for index, transition in enumerate(options.state_graph_transitions):
+        transition_box = layout.box()
+        row = transition_box.row(align=True)
+        if transition.from_any:
+            row.label(text="From any state")
+        else:
+            row.prop(transition, "from_pick")
+        row.prop(transition, "from_any", text="", icon="WORLD")
+        transition_box.prop(transition, "to_pick")
+        transition_box.prop(transition, "event_name")
+        transition_box.prop(transition, "condition")
+        if transition.condition == "range":
+            transition_box.prop(transition, "variable_pick")
+            row = transition_box.row(align=True)
+            row.prop(transition, "lower")
+            row.prop(transition, "upper")
+            row = transition_box.row(align=True)
+            row.prop(transition, "lower_exclusive")
+            row.prop(transition, "upper_exclusive")
+        row = transition_box.row(align=True)
+        row.prop(transition, "blend_seconds")
+        remove = row.operator(DARKTIDE_OT_remove_animation_transition.bl_idname, text="", icon="X")
+        remove.index = index
+    layout.operator(DARKTIDE_OT_add_animation_transition.bl_idname, icon="ADD")
+    layout.label(text="Event names take * (stagger_* is every stagger event).")
+    game = layout.box()
+    game.label(text="Game events", icon="IMPORT")
+    game.prop(bpy.context.scene.dt_asset, "game_unit", text="")
+    game.operator(DARKTIDE_OT_import_game_events.bl_idname)
+    events = state_graph.game_events(options)
+    if events:
+        row = game.row(align=True)
+        row.label(text=str(len(events)) + " from " + options.state_graph_game_events_source.rsplit("/", 1)[-1])
+        row.operator(DARKTIDE_OT_clear_game_events.bl_idname, text="", icon="X")
+
+
+class DARKTIDE_PT_flow(_SidebarPanel, bpy.types.Panel):
+    bl_label = "Flow"
+    bl_idname = "DARKTIDE_PT_flow"
+    bl_order = 3
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        options = _asset_options(context.scene)
+        row = self.layout.row(align=True)
+        row.prop(options, "flow_tree")
+        row.operator(DARKTIDE_OT_new_flow.bl_idname, text="", icon="ADD")
+        self.layout.label(text="Edit it in a node editor set to Darktide Flow")
+
+
+class DARKTIDE_PT_skeleton(_SidebarPanel, bpy.types.Panel):
+    bl_label = "Skeleton"
+    bl_idname = "DARKTIDE_PT_skeleton"
+    bl_order = 4
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        layout = self.layout
+        collection = context.scene.dt_asset.asset_collection
+        options = _asset_options(context.scene)
+        if not prefs().game_extract_folder.strip():
+            layout.label(text="Set 'Game files extract' in Setup first", icon="INFO")
+        if collection is None:
+            layout.operator(fit_skeleton.DARKTIDE_OT_new_starter_asset.bl_idname, icon="MESH_CAPSULE")
+            layout.label(text="Or make an asset first for the reference skeleton and fit tools")
+            return
+        identity = collection.dt_asset_identity
+        layout.prop(identity, "skeleton_preset")
+        if identity.skeleton_preset_status:
+            layout.label(text=identity.skeleton_preset_status[:90], icon="ERROR")
+        layout.prop(identity, "reference_unit")
+        layout.prop(identity, "reference_bones")
+        layout.prop(identity, "skeleton_resource")
+        layout.operator(DARKTIDE_OT_import_reference_skeleton.bl_idname)
+        layout.prop(options, "only_weighted_bones")
+        layout.label(text="Imported armature is added to this asset collection")
+        fit_skeleton.draw_fit_panel(layout, context, collection)
+
+
+class DARKTIDE_PT_game_unit(_SidebarPanel, bpy.types.Panel):
+    bl_label = "Game Unit"
+    bl_idname = "DARKTIDE_PT_game_unit"
+    bl_order = 5
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        return context.scene.dt_asset.asset_collection is not None
+
+    def draw(self, context):
+        layout = self.layout
+        if not prefs().game_extract_folder.strip():
+            layout.label(text="Set 'Game files extract' in Setup first", icon="INFO")
+        layout.prop(context.scene.dt_asset, "game_unit", text="")
+        layout.operator(DARKTIDE_OT_import_game_unit.bl_idname)
+        layout.operator(DARKTIDE_OT_import_game_collision.bl_idname)
+        options = _asset_options(context.scene)
+        layout.prop(options, "unit_package")
+        box = layout.box()
+        box.prop(options, "make_breed")
+        if options.make_breed:
+            box.prop(options, "breed_name")
+            box.prop(options, "breed_base")
+            box.prop(options, "breed_body")
+            box.prop(options, "breed_health")
+            row = box.row(align=True)
+            row.prop(options, "breed_walk_speed")
+            row.prop(options, "breed_run_speed")
+
+
+class DARKTIDE_PT_object(_SidebarPanel, bpy.types.Panel):
+    bl_label = "Active Object"
+    bl_idname = "DARKTIDE_PT_object"
+    bl_order = 6
+
+    @classmethod
+    def poll(cls, context):
+        return context.object is not None
+
+    def draw(self, context):
+        layout = self.layout
+        obj = context.object
+        layout.label(text=obj.name, icon="OBJECT_DATA")
+        layout.prop(obj.dt_collider, "visibility_group")
+        row = layout.row(align=True)
+        row.prop(obj.dt_collider, "render_visible")
+        row.prop(obj.dt_collider, "render_shadow")
+        layout.prop(obj.dt_collider, "lod_group")
+        if obj.dt_collider.lod_group.strip():
+            row = layout.row(align=True)
+            row.prop(obj.dt_collider, "lod_level")
+            row.prop(obj.dt_collider, "lod_down_to")
+        if obj.type == "EMPTY":
+            particle_effect.draw(layout, obj)
+
+
+class DARKTIDE_PT_physics(_SidebarPanel, bpy.types.Panel):
+    bl_label = "Collision and Physics"
+    bl_idname = "DARKTIDE_PT_physics"
+    bl_order = 7
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+        collection = scene.dt_asset.asset_collection
+        options = _asset_options(scene)
         asset_objects = list(collection.all_objects) if collection else []
         version2 = _v2_objects(asset_objects) if asset_objects else False
         if not version2:
             body = layout.box()
-            body.label(text="Asset collision")
+            body.label(text="Whole asset")
             body.prop(options, "visible_meshes_collide", text="Use visible meshes as collision")
             if options.visible_meshes_collide or any(o.dt_collider.role != "render" for o in asset_objects):
                 body.prop(options, "actor")
@@ -2015,285 +2815,154 @@ class DARKTIDE_PT_asset_panel(bpy.types.Panel):
                     body.prop(options, "mass")
                 body.prop(options, "material")
             body.label(text="Static uses the authored mesh surface")
-        output = layout.box()
-        output.label(text="Build")
-        output.operator(DARKTIDE_OT_create_asset_collection.bl_idname)
-        if collection and collection.dt_asset_identity.owned_by_addon:
-            output.operator(DARKTIDE_OT_update_asset_collection.bl_idname)
-        output.prop(settings, "asset_collection")
-        if collection:
-            output.prop(collection.dt_asset_identity, "asset_path")
-        else:
-            output.label(text="Create an asset collection before export or compile")
-        output.prop(settings, "compiler")
-        output.prop(settings, "output_path")
-        output.prop(options, "asset_filename")
-        output.prop(options, "output_kind")
-        if options.output_kind != "model":
-            output.prop(options, "select_clip")
-            if options.select_clip:
-                output.prop(options, "clip_index")
-        simple_row = output.row(align=True)
-        simple_row.enabled = options.output_kind == "all"
-        simple_row.prop(options, "embed_simple_animation")
-        if options.embed_simple_animation:
-            simple_row.prop(options, "simple_animation_clip", text="Clip")
-        ragdoll_row = output.row()
+        ragdoll_row = layout.row()
         ragdoll_row.enabled = options.output_kind == "all"
         ragdoll_row.prop(options, "ragdoll_event")
-        in_place_row = output.row()
-        in_place_row.enabled = options.output_kind != "model"
-        in_place_row.prop(options, "in_place")
-        output.prop(options, "weapon_materials")
-        flow_row = output.row(align=True)
-        flow_row.prop(options, "flow_tree")
-        flow_row.operator(DARKTIDE_OT_new_flow.bl_idname, text="", icon="ADD")
-        loop_row = output.row()
-        loop_row.enabled = options.output_kind == "all"
-        loop_row.prop(options, "auto_loop_single_clip")
-        loop_row = output.row()
-        loop_row.enabled = options.output_kind == "all"
-        loop_row.prop(options, "create_looping_state_machine")
-        graph_row = output.row()
-        graph_row.enabled = options.output_kind == "all"
-        graph_row.prop(options, "create_state_graph")
-        if options.output_kind != "all":
-            output.label(text="Animation controllers require Output kind All", icon="ERROR")
-        elif options.create_looping_state_machine and options.create_state_graph:
-            output.label(text="Choose one animation controller", icon="ERROR")
-        elif options.create_looping_state_machine:
-            row = output.row(align=True)
-            row.prop(options, "loop_clip_index", text="Clip")
-            row.prop(options, "state_machine_playback", text="")
-        elif options.auto_loop_single_clip and not options.create_state_graph:
-            output.label(text="A looping controller is added only when the exported GLB has one clip")
-        elif options.create_state_graph:
-            output.label(text="State 0 is the initial state (higher layers start in their first state)")
-            states = options.state_graph_states
-            for index, state in enumerate(states):
-                state_box = output.box()
-                row = state_box.row(align=True)
-                row.label(text="State " + str(index))
-                row.prop(state, "state_name", text="")
-                remove = row.operator(DARKTIDE_OT_remove_animation_state.bl_idname, text="", icon="X")
-                remove.index = index
-                row = state_box.row(align=True)
-                row.prop(state, "layer")
-                row.prop(state, "empty")
-                if not state.empty:
-                    row.prop(state, "additive")
-                    state_box.prop(state, "bones")
-                    row = state_box.row(align=True)
-                    row.prop(state, "blend")
-                    row.prop(state, "random")
-                if state.empty:
-                    pass
-                elif state.random:
-                    row = state_box.row(align=True)
-                    row.prop(state, "random_pick", text="")
-                    row.prop(state, "playback", text="")
-                    state_box.prop(state, "blend_clips")
-                elif state.blend:
-                    row.prop(state, "blend_2d")
-                    row = state_box.row(align=True)
-                    row.prop(state, "blend_variable", text="Variable X" if state.blend_2d else "Variable")
-                    if state.blend_2d:
-                        row.prop(state, "blend_variable2")
-                    row.prop(state, "playback", text="")
-                    state_box.prop(state, "blend_clips")
-                else:
-                    row.prop(state, "clip_index", text="Clip")
-                    row.prop(state, "playback", text="")
-                if not state.empty:
-                    row = state_box.row(align=True)
-                    row.prop(state, "speed_from_variable", text="Speed from variable")
-                    row.prop(state, "speed_variable" if state.speed_from_variable else "speed")
-                    state_box.prop(state, "events_at")
-                    row = state_box.row(align=True)
-                    row.prop(state, "exit_event")
-                    if state.exit_event.strip():
-                        row.prop(state, "exit_blend")
-            output.operator(DARKTIDE_OT_add_animation_state.bl_idname, icon="ADD")
-            output.label(text="Float variables", icon="DRIVER")
-            for index, variable in enumerate(options.state_graph_variables):
-                variable_box = output.box()
-                row = variable_box.row(align=True)
-                row.label(text="Variable " + str(index))
-                row.prop(variable, "variable_name", text="")
-                remove = row.operator(DARKTIDE_OT_remove_animation_variable.bl_idname,
-                                      text="", icon="X")
-                remove.index = index
-                variable_box.prop(variable, "initial_value")
-                row = variable_box.row(align=True)
-                row.prop(variable, "minimum")
-                row.prop(variable, "maximum")
-            output.operator(DARKTIDE_OT_add_animation_variable.bl_idname, icon="ADD")
-            output.label(text="Transitions", icon="DRIVER_TRANSFORM")
-            for index, transition in enumerate(options.state_graph_transitions):
-                transition_box = output.box()
-                row = transition_box.row(align=True)
-                from_name = (states[transition.from_state].state_name if transition.from_state < len(states)
-                             else "Missing state")
-                to_name = (states[transition.to_state].state_name if transition.to_state < len(states)
-                           else "Missing state")
-                row.label(text="From " + str(transition.from_state) + ": " + from_name)
-                row.prop(transition, "from_state", text="Index")
-                row = transition_box.row(align=True)
-                row.label(text="To " + str(transition.to_state) + ": " + to_name)
-                row.prop(transition, "to_state", text="Index")
-                transition_box.prop(transition, "event_name")
-                transition_box.prop(transition, "condition")
-                if transition.condition == "range":
-                    row = transition_box.row(align=True)
-                    row.prop(transition, "variable_index")
-                    variable_index = transition.variable_index
-                    variable_name = (options.state_graph_variables[variable_index].variable_name
-                                     if variable_index < len(options.state_graph_variables) else "Missing variable")
-                    row.label(text=variable_name)
-                    row = transition_box.row(align=True)
-                    row.prop(transition, "lower")
-                    row.prop(transition, "upper")
-                    row = transition_box.row(align=True)
-                    row.prop(transition, "lower_exclusive")
-                    row.prop(transition, "upper_exclusive")
-                row = transition_box.row(align=True)
-                row.prop(transition, "blend_seconds")
-                remove = row.operator(DARKTIDE_OT_remove_animation_transition.bl_idname,
-                                      text="", icon="X")
-                remove.index = index
-            output.operator(DARKTIDE_OT_add_animation_transition.bl_idname, icon="ADD")
-            output.label(text="The game or mod must send each named event.")
-        if not collection:
-            output.prop(settings, "asset_path", text="Initial resource path")
-            output.operator(DARKTIDE_OT_create_asset_collection.bl_idname, text="New Empty Asset")
-        if collection:
-            reference = layout.box()
-            reference.label(text="Reference Skeleton")
-            identity = collection.dt_asset_identity
-            reference.prop(settings, "game_extract_folder")
-            reference.prop(identity, "skeleton_preset")
-            if identity.skeleton_preset_status:
-                reference.label(text=identity.skeleton_preset_status[:90], icon="ERROR")
-            reference.prop(identity, "reference_unit")
-            reference.prop(identity, "reference_bones")
-            reference.prop(identity, "skeleton_resource")
-            reference.operator(DARKTIDE_OT_import_reference_skeleton.bl_idname)
-            reference.prop(options, "only_weighted_bones")
-            reference.label(text="Imported armature is added to this asset collection")
-            fit_skeleton.draw_fit_panel(layout, context, collection)
-            part = layout.box()
-            part.label(text="Game Unit Nodes")
-            part.prop(settings, "game_unit", text="")
-            part.operator(DARKTIDE_OT_import_game_unit.bl_idname)
-        output.prop(options, "scale")
-        if options.output_kind != "model":
-            output.prop(options, "animation_fit_advanced", text="Animation fit settings")
-            if options.animation_fit_advanced:
-                fit = output.box()
-                fit.prop(options, "animation_translation_tolerance")
-                fit.prop(options, "animation_scale_tolerance")
-                fit.prop(options, "animation_rotation_tolerance_radians")
-        output.prop(settings, "compile_timeout")
-        output.operator(DARKTIDE_OT_inspect.bl_idname)
-        if options.inspection_summary:
-            inspection = output.box()
-            inspection.label(text="Compiler source view (last inspection)")
-            for line in options.inspection_summary.splitlines():
-                inspection.label(text=line)
-        output.operator(DARKTIDE_OT_export_intermediate.bl_idname)
-        output.operator(DARKTIDE_OT_build.bl_idname)
-        collision_notes = _collision_review(scene, asset_objects) if asset_objects else []
-        if collision_notes:
+        mover = layout.box()
+        mover.prop(options, "use_mover")
+        if options.use_mover:
+            row = mover.row(align=True)
+            row.prop(options, "mover_height")
+            row.prop(options, "mover_radius")
+            mover.prop(options, "mover_slope")
+            mover.prop(options, "mover_filter")
+        notes = _collision_review(scene, asset_objects) if asset_objects else []
+        if notes:
             review = layout.box()
             review.label(text="Collision review")
-            for message in collision_notes[:3]:
+            for message in notes[:3]:
                 review.label(text=message)
-        if context.object and context.object.active_material:
-            material = context.object.active_material
-            material_box = layout.box()
-            material_box.label(text="Active material: " + material.name)
-            material_box.prop(material.dt_material, "mode")
-            if material.dt_material.mode not in ("external", "template"):
-                material_box.prop(material.dt_material, "double_sided")
-            if material.dt_material.mode == "external":
-                material_box.prop(material.dt_material, "resource")
-            elif material.dt_material.mode == "game_shader":
-                settings = material.dt_material
-                material_box.prop(scene.dt_asset, "game_folder")
-                material_box.prop(settings, "game_shader")
-                material_box.prop(settings, "shader_values")
-                material_box.prop(settings, "shader_textures")
-                preset = _game_shaders().get(settings.game_shader)
-                if preset:
-                    column = material_box.column(align=True)
-                    column.scale_y = 0.8
-                    for variable in preset["variables"]:
-                        column.label(text="%s = %s" % (variable["name"], ", ".join("%g" % v for v in variable["default"])))
-                    if preset["textures"]:
-                        column.label(text="Texture channels: " + ", ".join(preset["textures"]))
-            elif material.dt_material.mode == "donor":
-                settings = material.dt_material
-                material_box.prop(settings, "donor_stream")
-                for toggle, value in (("override_nm_r_blend", "nm_r_blend"),
-                                      ("override_shared_blend", "shared_blend"),
-                                      ("override_bc_blend", "bc_blend")):
-                    row = material_box.row(align=True)
-                    row.prop(settings, toggle, text="")
-                    row.prop(settings, value)
-            else:
-                material_box.prop(material.dt_material, "surface")
-        if context.object:
-            collider = layout.box()
-            collider.label(text="Active object: " + context.object.name)
-            collider.prop(context.object.dt_collider, "visibility_group")
-            row = collider.row(align=True)
-            row.prop(context.object.dt_collider, "render_visible")
-            row.prop(context.object.dt_collider, "render_shadow")
-            collider.prop(context.object.dt_collider, "lod_group")
-            if context.object.dt_collider.lod_group.strip():
-                row = collider.row(align=True)
-                row.prop(context.object.dt_collider, "lod_level")
-                row.prop(context.object.dt_collider, "lod_down_to")
-            if context.object.type == "EMPTY":
-                particle_effect.draw(collider, context.object)
-            collider.prop(context.object.dt_collider, "is_body")
-            if context.object.dt_collider.is_body:
-                collider.prop(context.object.dt_collider, "actor")
-                if context.object.dt_collider.actor == "dynamic":
-                    collider.prop(context.object.dt_collider, "mass")
-                collider.prop(context.object.dt_collider, "material")
-            if context.object.type == "MESH":
-                collider.prop(context.object.dt_collider, "role")
-                if options.visible_meshes_collide and context.object.dt_collider.role == "render":
-                    collider.prop(context.object.dt_collider, "use_asset_collision")
-                if context.object.dt_collider.role != "render":
-                    collider.prop(context.object.dt_collider, "shape")
-                    if version2:
-                        collider.prop(context.object.dt_collider, "body")
-                if collection and collection.all_objects.get(context.object.name) == context.object:
-                    collider.operator(DARKTIDE_OT_make_collision_proxy.bl_idname)
-        if context.object:
-            joint = context.object.dt_collider
-            if version2 or context.object.type == "EMPTY":
-                box = layout.box(); box.label(text="Joint")
-                box.prop(joint, "joint_kind")
-                if joint.joint_kind != "none":
-                    box.prop(joint, "body_a"); box.prop(joint, "body_b")
-                    if joint.joint_kind in {"hinge", "ragdoll"}:
-                        box.prop(joint, "hinge_limits")
-                        if joint.hinge_limits:
-                            box.prop(joint, "twist_min"); box.prop(joint, "twist_max")
-                    if joint.joint_kind == "ragdoll":
-                        box.prop(joint, "swing_y"); box.prop(joint, "swing_z")
-                    if joint.joint_kind == "slider":
-                        box.prop(joint, "slide_limits")
-                        if joint.slide_limits:
-                            box.prop(joint, "slide_min"); box.prop(joint, "slide_max")
-                    if joint.joint_kind != "fixed":
-                        row = box.row(align=True)
-                        row.prop(joint, "spring_stiffness"); row.prop(joint, "spring_damping")
+        obj = context.object
+        if obj is None:
+            return
+        collider = layout.box()
+        collider.label(text="Active object: " + obj.name)
+        if obj.type == "MESH":
+            collider.prop(obj.dt_collider, "unit_actor")
+            if obj.dt_collider.unit_actor != "none":
+                collider.prop(obj.dt_collider, "actor_shape")
+                collider.prop(obj.dt_collider, "actor_name")
+                if obj.dt_collider.unit_actor == "custom":
+                    collider.prop(obj.dt_collider, "actor_template")
+                    collider.prop(obj.dt_collider, "actor_shape_template")
+                if options.make_breed:
+                    collider.prop(obj.dt_collider, "hit_zone_group")
+                collider.prop(obj.dt_collider, "actor_spawn")
+                return
+        collider.prop(obj.dt_collider, "is_body")
+        if obj.dt_collider.is_body:
+            collider.prop(obj.dt_collider, "actor")
+            if obj.dt_collider.actor == "dynamic":
+                collider.prop(obj.dt_collider, "mass")
+            collider.prop(obj.dt_collider, "material")
+        if obj.type == "MESH":
+            collider.prop(obj.dt_collider, "role")
+            if options.visible_meshes_collide and obj.dt_collider.role == "render":
+                collider.prop(obj.dt_collider, "use_asset_collision")
+            if obj.dt_collider.role != "render":
+                collider.prop(obj.dt_collider, "shape")
+                if version2:
+                    collider.prop(obj.dt_collider, "body")
+            if collection and collection.all_objects.get(obj.name) == obj:
+                collider.operator(DARKTIDE_OT_make_collision_proxy.bl_idname)
+        joint = obj.dt_collider
+        if version2 or obj.type == "EMPTY":
+            box = layout.box()
+            box.label(text="Joint")
+            box.prop(joint, "joint_kind")
+            if joint.joint_kind != "none":
+                box.prop(joint, "body_a")
+                box.prop(joint, "body_b")
+                if joint.joint_kind in {"hinge", "ragdoll"}:
+                    box.prop(joint, "hinge_limits")
+                    if joint.hinge_limits:
+                        box.prop(joint, "twist_min")
+                        box.prop(joint, "twist_max")
+                if joint.joint_kind == "ragdoll":
+                    box.prop(joint, "swing_y")
+                    box.prop(joint, "swing_z")
+                if joint.joint_kind == "slider":
+                    box.prop(joint, "slide_limits")
+                    if joint.slide_limits:
+                        box.prop(joint, "slide_min")
+                        box.prop(joint, "slide_max")
+                if joint.joint_kind != "fixed":
                     row = box.row(align=True)
-                    row.prop(joint, "break_force"); row.prop(joint, "break_torque")
+                    row.prop(joint, "spring_stiffness")
+                    row.prop(joint, "spring_damping")
+                row = box.row(align=True)
+                row.prop(joint, "break_force")
+                row.prop(joint, "break_torque")
+
+
+class DARKTIDE_PT_material(_SidebarPanel, bpy.types.Panel):
+    bl_label = "Active Material"
+    bl_idname = "DARKTIDE_PT_material"
+    bl_order = 8
+
+    @classmethod
+    def poll(cls, context):
+        return context.object is not None and context.object.active_material is not None
+
+    def draw(self, context):
+        layout = self.layout
+        material = context.object.active_material
+        settings = material.dt_material
+        layout.label(text=material.name, icon="MATERIAL")
+        layout.prop(settings, "mode")
+        if settings.mode not in ("external", "template"):
+            layout.prop(settings, "double_sided")
+        if settings.mode == "external":
+            layout.prop(settings, "resource")
+        elif settings.mode == "game_shader":
+            if not prefs().game_folder.strip():
+                layout.label(text="Set the Darktide folder in Setup first", icon="INFO")
+            layout.prop(settings, "game_shader")
+            preset = _game_shaders().get(settings.game_shader)
+            if preset and (len(settings.shader_value_rows) != len(preset["variables"]) or
+                           len(settings.shader_texture_rows) != len(preset["textures"])):
+                layout.operator(DARKTIDE_OT_load_shader_settings.bl_idname, icon="FILE_REFRESH")
+            elif preset:
+                box = layout.box()
+                box.label(text="Settings (tick to change, unticked keeps the game's)")
+                for row in settings.shader_value_rows:
+                    line = box.row(align=True)
+                    line.prop(row, "changed", text="")
+                    line.label(text=row.name)
+                    values = line.row(align=True)
+                    values.active = row.changed
+                    if row.is_color:
+                        values.prop(row, "color", text="")
+                    else:
+                        for index in range(row.floats):
+                            values.prop(row, "value", index=index, text="")
+                if settings.shader_texture_rows:
+                    box = layout.box()
+                    box.label(text="Textures (images from this material's own nodes)")
+                    for row in settings.shader_texture_rows:
+                        line = box.row(align=True)
+                        line.label(text=row.name)
+                        line.prop(row, "source", text="")
+                if settings.shader_values or settings.shader_textures:
+                    box = layout.box()
+                    box.label(text="Other settings, typed by name")
+                    box.prop(settings, "shader_values")
+                    box.prop(settings, "shader_textures")
+        elif settings.mode == "donor":
+            layout.prop(settings, "donor_stream")
+            for toggle, value in (("override_nm_r_blend", "nm_r_blend"),
+                                  ("override_shared_blend", "shared_blend"),
+                                  ("override_bc_blend", "bc_blend")):
+                row = layout.row(align=True)
+                row.prop(settings, toggle, text="")
+                row.prop(settings, value)
+        else:
+            layout.prop(settings, "surface")
+
+
+SIDEBAR_PANELS = (DARKTIDE_PT_setup, DARKTIDE_PT_asset_panel, DARKTIDE_PT_animation, DARKTIDE_PT_flow,
+                  DARKTIDE_PT_skeleton, DARKTIDE_PT_game_unit, DARKTIDE_PT_object, DARKTIDE_PT_physics,
+                  DARKTIDE_PT_material)
 
 
 def _collection_data(collection):
@@ -2338,19 +3007,23 @@ class DARKTIDE_OT_new_flow(bpy.types.Operator):
         return {"FINISHED"}
 
 
-CLASSES = (*fit_skeleton.CLASSES, *particle_effect.CLASSES, DarktideAnimationState, DarktideAnimationVariable, DarktideAnimationTransition,
-           DarktideSceneSettings, DarktideCollectionSettings, DarktideMaterialSettings, DarktideDangleSettings, DarktideAimSettings, DarktideColliderSettings,
+CLASSES = (DarktidePreferences, *fit_skeleton.CLASSES, *particle_effect.CLASSES, DarktideAnimationState, DarktideAnimationVariable, DarktideAnimationTransition,
+           DarktideSceneSettings, DarktideCollectionSettings, DarktideShaderValue, DarktideShaderTexture, DarktideMaterialSettings, DarktideDangleSettings, DarktideAimSettings, DarktideColliderSettings,
            DARKTIDE_OT_create_asset_collection, DARKTIDE_OT_update_asset_collection,
-           DARKTIDE_OT_add_animation_state, DARKTIDE_OT_remove_animation_state,
+           DARKTIDE_OT_add_animation_state, DARKTIDE_OT_remove_animation_state, DARKTIDE_OT_state_bones_from_selection, DARKTIDE_OT_load_shader_settings,
            DARKTIDE_OT_add_animation_variable, DARKTIDE_OT_remove_animation_variable,
            DARKTIDE_OT_add_animation_transition, DARKTIDE_OT_remove_animation_transition,
            DARKTIDE_OT_make_collision_proxy, DARKTIDE_OT_export_intermediate, DARKTIDE_OT_new_flow,
-           DARKTIDE_OT_inspect, DARKTIDE_OT_build, DARKTIDE_OT_import_reference_skeleton, DARKTIDE_OT_import_game_unit,
-           *fit_skeleton.UI_CLASSES, DARKTIDE_PT_asset_panel, DARKTIDE_PT_bone_dangle, DARKTIDE_PT_bone_aim)
+           DARKTIDE_OT_inspect, DARKTIDE_OT_build, DARKTIDE_OT_import_reference_skeleton, DARKTIDE_OT_import_game_unit, DARKTIDE_OT_import_game_collision,
+           DARKTIDE_OT_import_game_events, DARKTIDE_OT_clear_game_events,
+           *fit_skeleton.UI_CLASSES, *SIDEBAR_PANELS, DARKTIDE_PT_bone_dangle, DARKTIDE_PT_bone_aim)
 
 
 def register():
     flow_editor.register()
+    particle_preview.register()
+    state_machine_preview.register()
+    pmx.register()
     for cls in CLASSES:
         bpy.utils.register_class(cls)
     bpy.types.Scene.dt_asset = PointerProperty(type=DarktideSceneSettings)
@@ -2372,6 +3045,9 @@ def unregister():
     del bpy.types.Scene.dt_asset
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)
+    pmx.unregister()
+    state_machine_preview.unregister()
+    particle_preview.unregister()
     flow_editor.unregister()
 
 

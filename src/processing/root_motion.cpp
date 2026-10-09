@@ -1,5 +1,6 @@
 #include "processing/root_motion.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
@@ -85,7 +86,7 @@ float& component(AnimationTrack& track, std::size_t key, std::size_t slot, std::
 }
 } // namespace
 
-bool remove_root_motion(Scene& scene, std::string& error) {
+bool remove_root_motion(Scene& scene, std::string& error, bool onto_root) {
     error.clear();
     std::set<int> joints;
     for (const auto& skin : scene.skins) joints.insert(skin.joints.begin(), skin.joints.end());
@@ -126,6 +127,24 @@ bool remove_root_motion(Scene& scene, std::string& error) {
         if (!travel) continue;
         const float start = travel->times.front(), span = travel->times.back() - start;
         if (!(span > 0.0f)) continue;
+        // the skeleton's top joint (root_point on the game's skeletons): the engine takes its motion as the unit's
+        int root = travel->target_node;
+        while (scene.nodes[static_cast<std::size_t>(root)].parent >= 0 && joints.count(scene.nodes[static_cast<std::size_t>(root)].parent))
+            root = scene.nodes[static_cast<std::size_t>(root)].parent;
+        if (onto_root && root == travel->target_node) {
+            scene.notes.push_back("clip '" + animation.name + "' already carries its travel on '" +
+                                  scene.nodes[static_cast<std::size_t>(root)].name + "'");
+            continue;
+        }
+        Vec3 root_local{};
+        if (onto_root) {
+            Mat3 inverse{};
+            if (!invert(parent_basis(scene, animation, root), inverse)) {
+                error = "clip '" + animation.name + "': the skeleton root has a degenerate parent transform";
+                return false;
+            }
+            root_local = transform_vec(inverse, horizontal);
+        }
         const bool cubic = travel->interpolation == AnimationInterpolation::CubicSpline;
         for (std::size_t key = 0; key < travel->times.size(); ++key) {
             const float t = (travel->times[key] - start) / span;
@@ -138,10 +157,45 @@ bool remove_root_motion(Scene& scene, std::string& error) {
             }
         }
         const float distance = std::hypot(horizontal[0], horizontal[1]);
-        char text[256];
-        std::snprintf(text, sizeof text, "clip '%s' plays in place: removed %.2f m of travel on '%s' over %.2f s, "
-                      "move the unit at %.2f m/s", animation.name.c_str(), distance,
-                      scene.nodes[static_cast<std::size_t>(travel->target_node)].name.c_str(), span, distance / span);
+        char text[320];
+        if (onto_root) {
+            const std::string carrier = scene.nodes[static_cast<std::size_t>(travel->target_node)].name;
+            AnimationTrack* root_track = nullptr;
+            for (auto& track : animation.tracks)
+                if (track.target_node == root && track.path == AnimationPath::Translation && track.value_components == 3 &&
+                    track.times.size() >= 1) root_track = &track;
+            if (root_track) {
+                const bool root_cubic = root_track->interpolation == AnimationInterpolation::CubicSpline;
+                for (std::size_t key = 0; key < root_track->times.size(); ++key) {
+                    const float t = std::clamp((root_track->times[key] - start) / span, 0.0f, 1.0f);
+                    for (std::size_t a = 0; a < 3; ++a) {
+                        component(*root_track, key, 1, a) += root_local[a] * t;
+                        if (root_cubic) {
+                            component(*root_track, key, 0, a) += root_local[a] / span;
+                            component(*root_track, key, 2, a) += root_local[a] / span;
+                        }
+                    }
+                }
+            } else {
+                const auto& rest = scene.nodes[static_cast<std::size_t>(root)].local_stingray;
+                AnimationTrack added;
+                added.target_node = root;
+                added.path = AnimationPath::Translation;
+                added.interpolation = AnimationInterpolation::Linear;
+                added.value_components = 3;
+                added.times = {start, travel->times.back()};
+                added.values = {rest[12], rest[13], rest[14],
+                                rest[12] + root_local[0], rest[13] + root_local[1], rest[14] + root_local[2]};
+                animation.tracks.push_back(std::move(added));
+            }
+            std::snprintf(text, sizeof text, "clip '%s': moved %.2f m of travel over %.2f s (%.2f m/s) from '%s' onto '%s'",
+                          animation.name.c_str(), distance, span, distance / span, carrier.c_str(),
+                          scene.nodes[static_cast<std::size_t>(root)].name.c_str());
+        } else {
+            std::snprintf(text, sizeof text, "clip '%s' plays in place: removed %.2f m of travel on '%s' over %.2f s, "
+                          "move the unit at %.2f m/s", animation.name.c_str(), distance,
+                          scene.nodes[static_cast<std::size_t>(travel->target_node)].name.c_str(), span, distance / span);
+        }
         scene.notes.emplace_back(text);
     }
     return true;

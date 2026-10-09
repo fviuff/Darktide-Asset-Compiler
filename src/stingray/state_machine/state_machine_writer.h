@@ -119,7 +119,10 @@ std::vector<std::uint8_t> write_direct_event_state_machine(
     const std::vector<DirectEventSelector>& selectors,
     const std::vector<BoneConstraint>& constraints = {},
     std::uint32_t bone_count = 0, // BONES list size; required with constraints (bone rows of constraint layers)
-    const std::vector<std::uint32_t>& ragdoll_actor_names = {});
+    const std::vector<std::uint32_t>& ragdoll_actor_names = {},
+    // further events scripts may send ("#1234abcd" = a raw hash); event, transition and variable names take that
+    // form too
+    const std::vector<std::string>& declared_events = {});
 
 bool validate_direct_event_state_machine(
     const std::vector<std::uint8_t>& bytes,
@@ -138,7 +141,10 @@ bool validate_direct_event_state_machine(
     std::string& error,
     const std::vector<BoneConstraint>& constraints = {},
     std::uint32_t bone_count = 0, // BONES list size; required with constraints (bone rows of constraint layers)
-    const std::vector<std::uint32_t>& ragdoll_actor_names = {});
+    const std::vector<std::uint32_t>& ragdoll_actor_names = {},
+    // further events scripts may send ("#1234abcd" = a raw hash); event, transition and variable names take that
+    // form too
+    const std::vector<std::string>& declared_events = {});
 
 bool validate_direct_event_state_machine_dependencies(
     const std::vector<std::uint8_t>& bytes,

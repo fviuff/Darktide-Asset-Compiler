@@ -351,9 +351,8 @@ bool build_actor(const std::vector<Primitive>& primitives,
         error = "UNIT physics supports geometry, convex, sphere, capsule, or box collision";
         return false;
     }
-    if (options.actor_template != "static" && options.actor_template != "dynamic" &&
-        options.actor_template != "keyframed") {
-        error = "physics actor template must be static, dynamic, or keyframed";
+    if (options.actor_template.empty()) {
+        error = "physics actor template must not be empty";
         return false;
     }
     if (actor_name.empty() || root_node.empty() || options.material.empty() ||
@@ -477,22 +476,8 @@ bool build_actor(const std::vector<Primitive>& primitives,
             }
         }
     } else if (options.shape == PhysicsShapeType::Sphere) {
-        double radius2 = 0.0;
-        for (const auto& primitive : primitives) {
-            const VertexChannel* position = nullptr;
-            for (const auto& channel : primitive.channels) if (
-                channel.semantic == VertexChannel::Semantic::Position && channel.components >= 3) {
-                position = &channel; break;
-            }
-            if (!position) continue;
-            for (std::size_t offset = 0; offset < position->values.size(); offset += position->components) {
-                const double x = static_cast<double>(position->values[offset]) - center[0];
-                const double y = static_cast<double>(position->values[offset + 1]) - center[1];
-                const double z = static_cast<double>(position->values[offset + 2]) - center[2];
-                radius2 = std::max(radius2, x*x + y*y + z*z);
-            }
-        }
-        shape.radius = static_cast<float>(std::sqrt(radius2));
+        // the Stingray physics compiler's sphere: the largest half extent of the bounding box
+        shape.radius = std::max({maximum[0] - minimum[0], maximum[1] - minimum[1], maximum[2] - minimum[2]}) * 0.5f;
         if (!std::isfinite(shape.radius) || shape.radius <= 0.0f) {
             error = "fitted sphere collision requires nonzero geometry extent";
             return false;
@@ -504,33 +489,16 @@ bool build_actor(const std::vector<Primitive>& primitives,
         int axis = 0;
         for (int candidate = 1; candidate < 3; ++candidate)
             if (maximum[candidate] - minimum[candidate] > maximum[axis] - minimum[axis]) axis = candidate;
-        double radius2 = 0.0;
-        for (const auto& primitive : primitives) {
-            const VertexChannel* position = nullptr;
-            for (const auto& channel : primitive.channels) if (
-                channel.semantic == VertexChannel::Semantic::Position && channel.components >= 3) {
-                position = &channel; break;
-            }
-            if (!position) continue;
-            for (std::size_t offset = 0; offset < position->values.size(); offset += position->components) {
-                double radial2 = 0.0;
-                for (int coordinate = 0; coordinate < 3; ++coordinate) {
-                    if (coordinate == axis) continue;
-                    const double delta = static_cast<double>(position->values[offset + coordinate]) - center[coordinate];
-                    radial2 += delta * delta;
-                }
-                radius2 = std::max(radius2, radial2);
-            }
-        }
-        shape.radius = static_cast<float>(std::sqrt(radius2));
+        // as the Stingray physics compiler fits a capsule to a mesh's bounding box: the radius is the larger
+        // half extent across the axis, the cylinder takes the rest of the length
+        const float half_axis = (maximum[axis] - minimum[axis]) * 0.5f;
+        shape.radius = std::max((maximum[(axis + 1) % 3] - minimum[(axis + 1) % 3]) * 0.5f,
+                                (maximum[(axis + 2) % 3] - minimum[(axis + 2) % 3]) * 0.5f);
         if (!std::isfinite(shape.radius) || shape.radius <= 0.0f) {
             error = "fitted capsule collision requires positive radial geometry extent";
             return false;
         }
-        // Use the full bounds span for the cylinder segment. This keeps every
-        // authored point inside the cylindrical section, including corner
-        // points at the axial extremes; the spherical caps extend by radius.
-        shape.height = maximum[axis] - minimum[axis];
+        shape.height = std::max(0.0f, (half_axis - shape.radius) * 2.0f);
         if (axis == 1) {
             shape.local_transform[0] = 0.0f; shape.local_transform[1] = 1.0f; shape.local_transform[2] = 0.0f;
             shape.local_transform[4] = -1.0f; shape.local_transform[5] = 0.0f;
@@ -552,17 +520,20 @@ bool build_actor(const std::vector<Primitive>& primitives,
     return true;
 }
 
+std::uint32_t template_id32(const std::string& name) {
+    if (name.size() == 9 && name[0] == '#' &&
+        std::all_of(name.begin() + 1, name.end(), [](unsigned char c) { return std::isxdigit(c) != 0; }))
+        return static_cast<std::uint32_t>(std::strtoul(name.c_str() + 1, nullptr, 16));
+    return id32_from_id64(name);
+}
+
 std::uint32_t shape_template_id32(const std::string& actor_template,
                                   const std::string& shape_template,
                                   bool node_bound) {
-    if (shape_template.size() == 9 && shape_template[0] == '#' &&
-        std::all_of(shape_template.begin() + 1, shape_template.end(),
-                    [](unsigned char c) { return std::isxdigit(c) != 0; }))
-        return static_cast<std::uint32_t>(std::strtoul(shape_template.c_str() + 1, nullptr, 16));
     // this one took way too long, crates just kept falling through the floor
     if (shape_template == "default" && actor_template == "dynamic")
         return node_bound ? id32_from_id64("ragdoll") : 0x9800a618u;
-    return id32_from_id64(shape_template);
+    return template_id32(shape_template);
 }
 
 bool serialize_actor(const PhysicsActor& actor,
@@ -572,15 +543,14 @@ bool serialize_actor(const PhysicsActor& actor,
     bytes.clear();
     error.clear();
     if (actor.name.empty() || actor.node.empty() ||
-        (actor.actor_template != "static" && actor.actor_template != "dynamic" &&
-         actor.actor_template != "keyframed") || !std::isfinite(actor.mass) || actor.mass < 0.0f ||
+        actor.actor_template.empty() || !std::isfinite(actor.mass) || actor.mass < 0.0f ||
         actor.shapes.empty() || actor.shapes.size() > std::numeric_limits<std::uint32_t>::max()) {
         error = "invalid physics actor";
         return false;
     }
     BinaryWriter writer;
     writer.u32(actor.name_hash ? actor.name_hash : id32_from_id64(actor.name));
-    writer.u32(id32_from_id64(actor.actor_template));
+    writer.u32(template_id32(actor.actor_template));
     writer.u32(actor.node_hash ? actor.node_hash : id32_from_id64(actor.node));
     writer.f32(actor.mass);
     writer.u32(static_cast<std::uint32_t>(actor.shapes.size()));

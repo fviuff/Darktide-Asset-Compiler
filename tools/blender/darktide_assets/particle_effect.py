@@ -79,14 +79,15 @@ def _material_stream(extract, game_bundle, material_hash):
 
 
 def _material_summary(stream):
-    """'name = values' for each variable and the texture channel names of a v61 material stream."""
+    """'name = values' for each variable, and (channel name, texture resource) for each texture of a v61 material stream."""
     names = _name_table()
     label = lambda value: names.get(value, "#%08x" % value)
     offset = struct.unpack_from("<I", stream, 4)[0] + 20
     count = struct.unpack_from("<I", stream, offset)[0]
     offset += 4 + 4 * count
     count = struct.unpack_from("<I", stream, offset)[0]
-    textures = [label(struct.unpack_from("<I", stream, offset + 4 + i * 12)[0]) for i in range(count)]
+    textures = [(label(name), resource) for name, resource in
+                (struct.unpack_from("<IQ", stream, offset + 4 + i * 12) for i in range(count))]
     offset += 4 + 12 * count
     count = struct.unpack_from("<I", stream, offset)[0]
     offset += 4 + 8 * count
@@ -197,6 +198,7 @@ class DarktideParticleMaterial(bpy.types.PropertyGroup):
     material_hash: StringProperty(name="Material")
     info_values: StringProperty(name="Current values")
     info_textures: StringProperty(name="Texture channels")
+    info_texture_ids: StringProperty(description="the game's texture resource of each channel, as 16 hex digits")
     values: StringProperty(name="Values", description="Variables to change, e.g. color=1,0.2,0.1; intensity=4")
     textures: StringProperty(name="Textures",
                              description="Channels to replace with your images, e.g. diffuse_map=//fire.png")
@@ -544,7 +546,9 @@ def load_materials(settings, extract, game_folder):
         item.material_hash = "%016x" % material_hash
         try:
             variables, textures = _material_summary(_material_stream(extract, bundle, material_hash))
-            item.info_values, item.info_textures = "; ".join(variables), ", ".join(textures)
+            item.info_values = "; ".join(variables)
+            item.info_textures = ", ".join(name for name, _ in textures)
+            item.info_texture_ids = ",".join("%016x" % resource for _, resource in textures)
         except (OSError, ValueError, struct.error):
             item.info_values = "not one of the game's materials in the extract"
         item.values, item.textures = previous.get(item.material_hash, ("", ""))
@@ -695,16 +699,15 @@ class DARKTIDE_OT_fx_import_game_effect(bpy.types.Operator):
     bl_description = "Load one of the game's effects into the editor (replaces the systems here)"
 
     def execute(self, context):
-        from . import _compiler_path, _run_compiler, _wine_tools, _windows_path
+        from . import _compiler_path, _run_compiler, _wine_tools, _windows_path, prefs
         settings = context.object.dt_particles
-        scene_settings = context.scene.dt_asset
-        extract = bpy.path.abspath(scene_settings.game_extract_folder.strip())
+        extract = bpy.path.abspath(prefs().game_extract_folder.strip())
         if not extract or not os.path.isdir(extract):
-            self.report({"ERROR"}, "Set 'Game extract folder' to your limn extract first")
+            self.report({"ERROR"}, "Set 'Game files extract' in the Setup panel to your limn extract first")
             return {"CANCELLED"}
 
         def decode(path):
-            compiler = _compiler_path(scene_settings)
+            compiler = _compiler_path()
             wine = _wine_tools(compiler)
             with tempfile.TemporaryDirectory() as folder:
                 out = os.path.join(folder, "effect.json")
@@ -716,7 +719,7 @@ class DARKTIDE_OT_fx_import_game_effect(bpy.types.Operator):
                     return json.load(source)
         try:
             import_game_effect(settings, extract, decode)
-            load_materials(settings, extract, scene_settings.game_folder)
+            load_materials(settings, extract, prefs().game_folder)
         except (OSError, ValueError, KeyError) as exc:
             self.report({"ERROR"}, str(exc)[:200])
             return {"CANCELLED"}
@@ -732,20 +735,60 @@ class DARKTIDE_OT_fx_load_materials(bpy.types.Operator):
     bl_description = "List the game's materials the effect draws with, with their values and texture channels"
 
     def execute(self, context):
+        from . import prefs
         settings = context.object.dt_particles
-        scene_settings = context.scene.dt_asset
-        extract = bpy.path.abspath(scene_settings.game_extract_folder.strip())
+        extract = bpy.path.abspath(prefs().game_extract_folder.strip())
         if not extract or not os.path.isdir(extract):
-            self.report({"ERROR"}, "Set 'Game extract folder' to your limn extract first")
+            self.report({"ERROR"}, "Set 'Game files extract' in the Setup panel to your limn extract first")
             return {"CANCELLED"}
         try:
-            count = load_materials(settings, extract, scene_settings.game_folder)
+            count = load_materials(settings, extract, prefs().game_folder)
         except (OSError, ValueError, struct.error) as exc:
             self.report({"ERROR"}, str(exc)[:200])
             return {"CANCELLED"}
         if not settings.resource_name.strip():
             settings.resource_name = "".join(c if c.isalnum() or c in "_-" else "_" for c in context.object.name.lower())
         self.report({"INFO"}, "The effect draws with " + str(count) + " material(s)")
+        return {"FINISHED"}
+
+
+class DARKTIDE_OT_fx_view_texture(bpy.types.Operator):
+    bl_idname = "darktide.fx_view_texture"
+    bl_label = "View Texture"
+    bl_description = "Open this game texture as an image (shown in any open Image Editor)"
+
+    texture: StringProperty()
+
+    def execute(self, context):
+        from . import _compiler_path, _run_compiler, _wine_tools, _windows_path, prefs
+        extract = bpy.path.abspath(prefs().game_extract_folder.strip())
+        source = os.path.join(extract, self.texture + ".texture")
+        if not os.path.isfile(source):
+            self.report({"ERROR"}, "Texture " + self.texture + " is not in the extract folder (extract with limn's 'texture' filter)")
+            return {"CANCELLED"}
+        name = "game texture " + self.texture
+        image = bpy.data.images.get(name)
+        if image is None:
+            try:
+                compiler = _compiler_path()
+                wine = _wine_tools(compiler)
+                out = os.path.join(tempfile.gettempdir(), "darktide_texture_" + self.texture + ".png")
+                result = _run_compiler(compiler, ["--texture-image", _windows_path(source, wine), _windows_path(out, wine)],
+                                       wine, capture_output=True, text=True, timeout=120, check=False)
+                if result.returncode:
+                    raise ValueError((result.stderr or result.stdout or "the compiler could not read the texture").strip()[:200])
+                image = bpy.data.images.load(out)
+                image.pack()
+                image.name = name
+            except (OSError, ValueError, RuntimeError) as exc:
+                self.report({"ERROR"}, str(exc)[:200])
+                return {"CANCELLED"}
+        shown = False
+        for area in context.screen.areas:
+            if area.type == "IMAGE_EDITOR":
+                area.spaces.active.image = image
+                shown = True
+        self.report({"INFO"}, name + " (" + "%dx%d" % tuple(image.size) + ")" + ("" if shown else ": open an Image Editor to see it"))
         return {"FINISHED"}
 
 
@@ -1051,6 +1094,22 @@ class DARKTIDE_PT_particle_effect(bpy.types.Panel):
         row = layout.row(align=True)
         row.prop(settings, "effect")
         row.operator(DARKTIDE_OT_fx_import_game_effect.bl_idname, text="Import", icon="IMPORT")
+        from . import prefs
+        if not prefs().game_extract_folder.strip():
+            layout.label(text="Importing game effects needs 'Game files extract' (Darktide tab > Setup)", icon="INFO")
+        if settings.systems:
+            from . import particle_preview
+            playing = particle_preview.is_previewing(context.object)
+            row = layout.row(align=True)
+            row.operator(particle_preview.DARKTIDE_OT_fx_preview.bl_idname, text="Stop Preview" if playing else "Preview",
+                         icon="PAUSE" if playing else "PLAY", depress=playing)
+            if playing:
+                row.operator(particle_preview.DARKTIDE_OT_fx_preview_restart.bl_idname, text="", icon="FILE_REFRESH")
+            missing = particle_preview.not_previewed(settings)
+            if missing:
+                layout.label(text="Not in the preview: " + ", ".join(missing)[:120], icon="INFO")
+            for problem in particle_preview.preview_problems(context.object):
+                layout.label(text="Drawn as dots: " + problem[:120], icon="INFO")
         box = layout.box()
         box.label(text="Effect")
         row = box.row()
@@ -1090,7 +1149,11 @@ class DARKTIDE_PT_particle_effect(bpy.types.Panel):
             if item.info_values:
                 material.label(text=item.info_values[:120])
             if item.info_textures:
-                material.label(text="Textures: " + item.info_textures[:110])
+                row = material.row(align=True)
+                row.label(text="Textures:")
+                ids = item.info_texture_ids.split(",") if item.info_texture_ids else []
+                for name, texture in zip(item.info_textures.split(", "), ids):
+                    row.operator(DARKTIDE_OT_fx_view_texture.bl_idname, text=name).texture = texture
             material.prop(item, "values")
             material.prop(item, "textures")
 
@@ -1105,6 +1168,7 @@ def draw(layout, obj):
 
 CLASSES = (DarktideFxField, DarktideFxComponent, DarktideFxVertexChannel, DarktideFxVisualizer, DarktideFxChannel,
            DarktideFxVariable, DarktideFxSystem, DarktideParticleMaterial, DarktideParticleSettings,
-           DARKTIDE_OT_fx_import_game_effect, DARKTIDE_OT_fx_load_materials, DARKTIDE_OT_fx_new_system,
+           DARKTIDE_OT_fx_import_game_effect, DARKTIDE_OT_fx_load_materials, DARKTIDE_OT_fx_view_texture,
+           DARKTIDE_OT_fx_new_system,
            DARKTIDE_OT_fx_remove_system, DARKTIDE_OT_fx_add, DARKTIDE_OT_fx_remove, DARKTIDE_OT_fx_move,
            DARKTIDE_OT_fx_set_type, DARKTIDE_OT_fx_curve_points, DARKTIDE_UL_fx_systems, DARKTIDE_PT_particle_effect)

@@ -41,10 +41,16 @@ static void usage() {
         "  DarktideGLBCompiler --particles-schema   (the particle components and their fields, as JSON)\n"
         "  DarktideGLBCompiler --flow <unit.flow> [out.json]   (a unit flow graph as JSON; reads <unit>.flowdyn beside it)\n"
         "  DarktideGLBCompiler --flow-schema   (the flow node types with their inputs, outputs and events, as JSON)\n"
+        "  DarktideGLBCompiler --physics-joints <file.unit>   (the D6 joints of a unit's physics collection, one per line)\n"
+        "  DarktideGLBCompiler --physics-collection <file.unit>   (a unit's physics bodies, shapes and joints, as JSON)\n"
+        "  DarktideGLBCompiler --physics-meshes <file>   (cooked PhysX shapes as vertices and triangles, JSON; the file holds\n"
+        "      records of u32 type 3 triangle mesh / 4 convex, u32 size, cooked bytes)\n"
         "  DarktideGLBCompiler --flow-build <flow.json>   (an authored flow graph as the --flow description)\n"
         "  DarktideGLBCompiler --unit-data <file>   (a unit's script data bytes as JSON)\n"
         "  DarktideGLBCompiler --shader <material stream>   (the compiled shaders of a shader material, summarized as JSON)\n"
         "  DarktideGLBCompiler --shader-reflect <stage.dxbc>...   (binding records of compiled stages of one shader group, in order)\n"
+        "  DarktideGLBCompiler --shader-stages <material stream> <out dir>   (unpacked vertex and pixel stages of a shader material, with index.json)\n"
+        "  DarktideGLBCompiler --texture-image <file.texture> <out.png>   (the largest mip a game texture holds itself, as a PNG; prints its size and srgb or linear)\n"
         "  DarktideGLBCompiler --configure-oodle <game directory or oo2core_9_win64.dll>\n"
         "  DarktideGLBCompiler --capabilities\n\n"
         "  DarktideGLBCompiler --licenses\n\n"
@@ -61,8 +67,15 @@ static void usage() {
         "--loop-clip emits a minimal looping STATE_MACHINE for an emitted clip in all-output mode.\n"
         "--once-clip emits a minimal one-shot STATE_MACHINE for an emitted clip in all-output mode.\n"
         "--sm-state and --sm-transition author direct-event STATE_MACHINE states and transitions in all-output mode.\n"
+        "@FILE anywhere stands for the arguments in FILE, one per line.\n"
+        "--sm-declare-events A,B,... lists further events scripts may send that no transition reacts to (the engine\n"
+        "stops on an event its state machine doesn't list); #1234abcd names an event by its hash.\n"
         "--in-place removes the horizontal root travel from every clip so walk/run cycles loop on the spot;\n"
         "build.log notes each clip's speed for moving the unit from Lua.\n"
+        "--root-motion moves that travel onto the skeleton root (root_point) instead, where the engine reads it\n"
+        "as root motion (Unit.animation_wanted_root_pose), like the game's character clips.\n"
+        "--package-name NAME names the package the asset is loaded with (default: Custom Assets picks one). Give an\n"
+        "enemy body its own resource path: the game loads a breed's base_unit as a package of that name.\n"
         "--ragdoll-event NAME adds a ragdoll state entered on NAME from every state; dynamic node bodies stay\n"
         "uncreated until then (retail minion ragdoll setup).\n"
         "--scale uniformly converts all spatial data before Stingray coordinate conversion (1 keeps glTF units).\n"
@@ -209,6 +222,23 @@ static bool parse_positive_int(const std::string& value, int& result) {
 }
 
 int main(int argc, char** argv) {
+    // @file stands for the arguments in that file, one per line (a big state machine doesn't fit a command line)
+    std::vector<std::string> expanded;
+    for (int i = 0; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (i == 0 || arg.size() < 2 || arg[0] != '@') { expanded.push_back(arg); continue; }
+        std::ifstream file(fs::u8path(arg.substr(1)));
+        if (!file) { std::cerr << "cannot read argument file " << arg.substr(1) << "\n"; return 1; }
+        for (std::string line; std::getline(file, line);) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            expanded.push_back(line);
+        }
+    }
+    std::vector<char*> expanded_argv;
+    for (auto& arg : expanded) expanded_argv.push_back(arg.data());
+    expanded_argv.push_back(nullptr);
+    argc = static_cast<int>(expanded.size());
+    argv = expanded_argv.data();
     if (argc < 2) { usage(); return 1; }
     if (std::string(argv[1]) == "--help" || std::string(argv[1]) == "-h") { usage(); return 0; }
     if (std::string(argv[1]) == "--licenses") { if (argc != 2) { usage(); return 1; } std::cout << darktide_third_party_licenses; return 0; }
@@ -280,7 +310,147 @@ int main(int argc, char** argv) {
         std::cout << dtglb::json::dump(dtglb::stingray::material::describe_shader_section(section)) << '\n';
         return 0;
     }
-    if (std::string(argv[1]) == "--physics-joints") {
+    if (std::string(argv[1]) == "--shader-stages") {
+        if (argc != 4) { usage(); return 1; }
+        std::ifstream file(argv[2], std::ios::binary);
+        const std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        std::string error;
+        std::uint32_t header[7] = {};
+        if (bytes.size() >= sizeof(header)) std::memcpy(header, bytes.data(), sizeof(header));
+        dtglb::stingray::material::ShaderSection section;
+        if (bytes.size() < sizeof(header)) error = "not a material stream";
+        else if (!header[4] || header[3] > bytes.size() || header[4] > bytes.size() - header[3]) error = "the stream has no shader section";
+        else dtglb::stingray::material::decode_shader_section(
+            std::vector<std::uint8_t>(bytes.begin() + header[3], bytes.begin() + header[3] + header[4]), section, error);
+        if (!error.empty()) { std::cerr << argv[2] << ": " << error << '\n'; return 2; }
+        // index.json: contexts (shader names + condition offsets), the condition programs, and per shader its
+        // passes with layer, render states, sampler states and the stage files written next to it
+        using dtglb::json::Value;
+        const fs::path out = fs::u8path(argv[3]);
+        std::error_code ec;
+        fs::create_directories(out, ec);
+        auto root = Value::object();
+        auto contexts = Value::array();
+        for (const auto& c : section.contexts) {
+            auto context = Value::object();
+            context.set("name", Value::of(static_cast<double>(c.name)));
+            auto shaders = Value::array();
+            for (const auto& [shader, condition] : c.shaders) {
+                auto pair = Value::array();
+                pair.push(Value::of(static_cast<double>(shader)));
+                pair.push(Value::of(static_cast<double>(condition)));
+                shaders.push(std::move(pair));
+            }
+            context.set("shaders", std::move(shaders));
+            contexts.push(std::move(context));
+        }
+        root.set("contexts", std::move(contexts));
+        static const char digits[] = "0123456789abcdef";
+        std::string conditions;
+        for (const auto byte : section.conditions) { conditions += digits[byte >> 4]; conditions += digits[byte & 15]; }
+        root.set("conditions", Value::of(conditions));
+        auto states = [](const std::vector<dtglb::stingray::material::RenderState>& list) {
+            auto array = Value::array();
+            for (const auto& state : list) {
+                auto pair = Value::array();
+                pair.push(Value::of(static_cast<double>(state.key)));
+                pair.push(Value::of(static_cast<double>(state.value)));
+                array.push(std::move(pair));
+            }
+            return array;
+        };
+        static const char* stage_names[] = {"vertex", "domain", "hull", "geometry", "pixel", "compute"};
+        auto shaders = Value::array();
+        for (std::size_t i = 0; i < section.shader_data.size() && error.empty(); ++i) {
+            const auto& data = section.shader_data[i];
+            auto shader = Value::object();
+            shader.set("name", Value::of(static_cast<double>(data.name)));
+            auto passes = Value::array();
+            for (std::size_t p = 0; p < data.passes.size() && error.empty(); ++p) {
+                auto pass = Value::object();
+                pass.set("layer", Value::of(static_cast<double>(data.passes[p].layer)));
+                const dtglb::stingray::material::ShaderPass* device = nullptr;
+                for (const auto& d : section.device_data)
+                    if (i < d.groups.size() && p < d.groups[i].size()) device = &d.groups[i][p];
+                if (device) {
+                    pass.set("render_states", states(device->render_states));
+                    auto samplers = Value::object();
+                    for (const auto& sampler : device->sampler_states) samplers.set(std::to_string(sampler.name), states(sampler.states));
+                    pass.set("sampler_states", std::move(samplers));
+                    for (const std::size_t k : {std::size_t{0}, std::size_t{4}}) {
+                        if (device->stages[k].empty()) continue;
+                        const auto& variant = device->stages[k].front();
+                        std::vector<std::uint8_t> unpacked(variant.size);
+                        if (!dtglb::stingray::texture::oodle_decompress(variant.bytecode, unpacked, error)) break;
+                        const auto name = "s" + std::to_string(i) + "_p" + std::to_string(p) + "_" + stage_names[k] + ".dxbc";
+                        std::ofstream stage(out / name, std::ios::binary);
+                        stage.write(reinterpret_cast<const char*>(unpacked.data()), static_cast<std::streamsize>(unpacked.size()));
+                        if (!stage) { error = "cannot write " + (out / name).string(); break; }
+                        pass.set(stage_names[k], Value::of(name));
+                    }
+                }
+                passes.push(std::move(pass));
+            }
+            shader.set("passes", std::move(passes));
+            shaders.push(std::move(shader));
+        }
+        if (!error.empty()) { std::cerr << argv[2] << ": " << error << '\n'; return 2; }
+        root.set("shaders", std::move(shaders));
+        std::ofstream index(out / "index.json", std::ios::binary);
+        index << dtglb::json::dump(root) << '\n';
+        if (!index) { std::cerr << "cannot write " << (out / "index.json").string() << '\n'; return 2; }
+        return 0;
+    }
+    if (std::string(argv[1]) == "--texture-image") {
+        if (argc != 4) { usage(); return 1; }
+        std::ifstream file(argv[2], std::ios::binary);
+        const std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        // a limn extract's texture: 38-byte envelope, body size at 29; most bodies are stubs naming a loose file
+        // under <game>/bundle that holds the real body
+        std::string error;
+        std::uint32_t body_size = 0;
+        if (bytes.size() >= 38) std::memcpy(&body_size, bytes.data() + 29, 4);
+        std::vector<std::uint8_t> body;
+        if (bytes.size() < 38 || 38ull + body_size > bytes.size()) error = "not a texture resource";
+        else body.assign(bytes.begin() + 38, bytes.begin() + 38 + body_size);
+        if (error.empty() && body.size() >= 5 && std::memcmp(body.data(), "data/", 5) == 0) {
+            const std::string loose(reinterpret_cast<const char*>(body.data()), strnlen(reinterpret_cast<const char*>(body.data()), body.size()));
+            const fs::path path = dtglb::stingray::texture::game_root() / "bundle" / loose;
+            std::ifstream source(path, std::ios::binary);
+            if (!source) error = "names " + loose + ", which is not in the game folder";
+            else body.assign(std::istreambuf_iterator<char>(source), std::istreambuf_iterator<char>());
+        }
+        dtglb::stingray::texture::ImageRGBA image;
+        bool srgb = false;
+        if (error.empty() && dtglb::stingray::texture::texture_body_image(body, image, error, &srgb))
+            dtglb::stingray::texture::write_png(image, fs::u8path(argv[3]), error);
+        if (!error.empty()) { std::cerr << argv[2] << ": " << error << '\n'; return 2; }
+        std::cout << image.width << "x" << image.height << (srgb ? " srgb" : " linear") << '\n';
+        return 0;
+    }
+    if (std::string(argv[1]) == "--physics-meshes") {
+        // records of u32 type (3 triangle mesh, 4 convex), u32 size, cooked bytes
+        if (argc != 3) { usage(); return 1; }
+        std::ifstream file(fs::u8path(argv[2]), std::ios::binary);
+        const std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        std::vector<std::pair<std::uint32_t, std::vector<std::uint8_t>>> meshes;
+        std::string error, text;
+        for (std::size_t at = 0; at < bytes.size();) {
+            std::uint32_t type = 0, size = 0;
+            if (bytes.size() - at < 8) { error = "the mesh file is truncated"; break; }
+            std::memcpy(&type, bytes.data() + at, 4);
+            std::memcpy(&size, bytes.data() + at + 4, 4);
+            at += 8;
+            if (size > bytes.size() - at) { error = "the mesh file is truncated"; break; }
+            meshes.emplace_back(type, std::vector<std::uint8_t>(bytes.begin() + at, bytes.begin() + at + size));
+            at += size;
+        }
+        if (error.empty()) dtglb::stingray::physics::describe_cooked_meshes(meshes, text, error);
+        if (!error.empty()) { std::cerr << argv[2] << ": " << error << '\n'; return 2; }
+        std::cout << text;
+        return 0;
+    }
+    if (std::string(argv[1]) == "--physics-joints" || std::string(argv[1]) == "--physics-collection") {
         // the unit's physics scene: u32 size, then the dependency and object collections (each starting "SEBD")
         // with a 128-byte header at the end giving their offsets and sizes
         if (argc != 3) { usage(); return 1; }
@@ -304,7 +474,9 @@ int main(int argc, char** argv) {
                                                                  : std::vector<std::uint8_t>();
             };
             const auto dependencies = slice(word(8), word(12)), objects = slice(word(80), word(84));
-            if (dependencies.empty() || objects.empty()) error = "the physics scene header does not match";
+            if (std::string(argv[1]) == "--physics-collection")
+                dtglb::stingray::physics::describe_physics_collection(std::vector<std::uint8_t>(scene, scene + size), text, error);
+            else if (dependencies.empty() || objects.empty()) error = "the physics scene header does not match";
             else dtglb::stingray::physics::describe_physics_joints(dependencies, objects, text, error);
         }
         if (!error.empty()) { std::cerr << argv[2] << ": " << error << '\n'; return 2; }
@@ -521,6 +693,11 @@ int main(int argc, char** argv) {
         }
         else if (a == "--no-simple-animation") { opt.simple_animation = false; }
         else if (a == "--in-place") { opt.in_place = true; }
+        else if (a == "--root-motion") { opt.root_motion = true; }
+        else if (a == "--package-name") {
+            if (i + 1 >= argc || !*argv[i + 1]) { std::cerr << "--package-name requires a resource name\n"; return 1; }
+            opt.package_name = argv[++i];
+        }
         else if (a == "--ragdoll-event") {
             if (i + 1 >= argc || !*argv[i + 1]) { std::cerr << "--ragdoll-event requires an event name\n"; return 1; }
             opt.ragdoll_event = argv[++i];
@@ -706,6 +883,18 @@ int main(int argc, char** argv) {
                 std::cerr << "Invalid --sm-transition blend seconds: " << argv[i] << "\n"; return 1;
             }
             opt.state_machine_transitions.push_back(std::move(transition));
+        }
+        else if (a == "--sm-declare-events") {
+            if (i + 1 >= argc) { std::cerr << "--sm-declare-events requires a comma-separated list\n"; return 1; }
+            const std::string list = argv[++i];
+            std::size_t start = 0;
+            while (start <= list.size()) {
+                const auto comma = list.find(',', start);
+                const auto name = list.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+                if (!name.empty()) opt.state_machine_declared_events.push_back(name);
+                if (comma == std::string::npos) break;
+                start = comma + 1;
+            }
         }
         else if (a == "--sm-variable") {
             if (i + 4 >= argc) { std::cerr << "--sm-variable requires NAME INITIAL MIN MAX\n"; return 1; }

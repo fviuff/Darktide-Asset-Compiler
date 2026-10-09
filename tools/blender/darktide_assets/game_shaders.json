@@ -154,7 +154,7 @@
    },
    "textures": [
     "bc",
-    "#370815a8",
+    "dtclr",
     "#b05d64fd",
     "nm",
     "orm"
@@ -233,7 +233,7 @@
      ]
     },
     {
-     "name": "#fc7481d5",
+     "name": "scroll_speed_u_mask",
      "floats": 1,
      "default": [
       -0.111
@@ -247,7 +247,7 @@
      ]
     },
     {
-     "name": "#2117540a",
+     "name": "scroll_speed_v_mask",
      "floats": 1,
      "default": [
       0.094
@@ -335,7 +335,7 @@
      ]
     },
     {
-     "name": "#fc68a01e",
+     "name": "Noise_amount_contrast",
      "floats": 2,
      "default": [
       1.0,
@@ -386,7 +386,7 @@
     "acd40fd8373c80be": "data/98/98c431aacb1e5da4"
    },
    "textures": [
-    "#cf7c7fba"
+    "grunge_texture_2"
    ],
    "variables": [
     {
@@ -425,7 +425,7 @@
    },
    "textures": [
     "grunge_texture",
-    "#648dc0f3"
+    "texture_map_9ca2ba8d"
    ],
    "variables": [
     {
@@ -486,7 +486,7 @@
    "textures": [
     "nm",
     "orm",
-    "#64ec3c60"
+    "texture_map_41c432bb"
    ],
    "variables": []
   },
@@ -502,7 +502,7 @@
    "textures": [
     "nm",
     "orm",
-    "#64ec3c60"
+    "texture_map_41c432bb"
    ],
    "variables": [
     {
@@ -527,7 +527,7 @@
    },
    "textures": [
     "foam",
-    "#6ee6cefe",
+    "foam_normal",
     "nm",
     "warp_texture"
    ],
@@ -552,7 +552,7 @@
      ]
     },
     {
-     "name": "#bed0e77f",
+     "name": "material_variable_a217b0ce",
      "floats": 1,
      "default": [
       -0.113
@@ -648,9 +648,9 @@
     "8d2e80197f14801f": "data/16/16d4ccdba04291e8"
    },
    "textures": [
-    "#63fffa09",
+    "debris_mask",
     "foam",
-    "#6ee6cefe",
+    "foam_normal",
     "nm",
     "warp_texture"
    ],
@@ -682,7 +682,7 @@
      ]
     },
     {
-     "name": "#bed0e77f",
+     "name": "material_variable_a217b0ce",
      "floats": 1,
      "default": [
       0.14
@@ -733,14 +733,14 @@
      ]
     },
     {
-     "name": "#5f67392e",
+     "name": "fresnell_multiplier",
      "floats": 1,
      "default": [
       0.0
      ]
     },
     {
-     "name": "#53169e37",
+     "name": "direction_normal_x_y",
      "floats": 2,
      "default": [
       -0.024,
@@ -755,7 +755,7 @@
      ]
     },
     {
-     "name": "#bbc88a01",
+     "name": "material_variable_7062e927",
      "floats": 2,
      "default": [
       10.0,
@@ -772,7 +772,7 @@
      ]
     },
     {
-     "name": "#9d502642",
+     "name": "material_variable_44f91201",
      "floats": 2,
      "default": [
       0.0,
@@ -799,11 +799,11 @@
    "textures": [
     "bca",
     "masks",
-    "#00062520",
-    "#f0f6d5c3",
+    "texture_map_84de0501",
+    "texture_map_c3063d80",
     "#4c250f92",
-    "#d221764f",
-    "#f0b83ce2"
+    "texture_map_ca5ed341",
+    "texture_map_e67dd5ad"
    ],
    "variables": [
     {
@@ -828,7 +828,7 @@
      ]
     },
     {
-     "name": "#588192c7",
+     "name": "material_variable_d388c780",
      "floats": 1,
      "default": [
       0.4
@@ -842,7 +842,7 @@
      ]
     },
     {
-     "name": "#a3c4f16e",
+     "name": "material_variable_8a2ad910",
      "floats": 1,
      "default": [
       0.5
@@ -880,11 +880,11 @@
     "a5d5c6b6be16e4b5": "data/8f/8ff6e6283d8012a5"
    },
    "textures": [
-    "#00062520",
-    "#f0f6d5c3",
+    "texture_map_84de0501",
+    "texture_map_c3063d80",
     "#4c250f92",
-    "#d221764f",
-    "#f0b83ce2"
+    "texture_map_ca5ed341",
+    "texture_map_e67dd5ad"
    ],
    "variables": [
     {
@@ -911,7 +911,7 @@
      ]
     },
     {
-     "name": "#a3c4f16e",
+     "name": "material_variable_8a2ad910",
      "floats": 1,
      "default": [
       0.379
@@ -957,10 +957,10 @@
     "4203292e1474dd2b": "data/02/02cbef800e330142"
    },
    "textures": [
-    "#3dedb430",
-    "#6497d277",
+    "glimmer_tex",
+    "inside_normal",
     "nm",
-    "#2a6b6861",
+    "noise_tex",
     "orm"
    ],
    "variables": [
@@ -1058,7 +1058,7 @@
      ]
     },
     {
-     "name": "#f8037c48",
+     "name": "world_tiling",
      "floats": 2,
      "default": [
       0.048,
@@ -1083,10 +1083,10 @@
     "d8aba2b9b31679c3": "data/d2/d291031e5377133e"
    },
    "textures": [
-    "#32849cb3",
+    "fur_coat_mask",
     "fur_color_gradient",
-    "#499d1d71",
-    "#d12b8765",
+    "texture_map_2d853df9",
+    "bcm",
     "nm",
     "orm"
    ],
@@ -1099,7 +1099,7 @@
      ]
     },
     {
-     "name": "#d72308d3",
+     "name": "material_variable_cbd4f679",
      "floats": 1,
      "default": [
       0.203
@@ -1132,8 +1132,8 @@
     "289237297530ad35": "data/d8/d87417ad4838ba15"
    },
    "textures": [
-    "#e1d6cd35",
-    "#78f5cbd4"
+    "scanline_horizontal",
+    "scanline_vertical"
    ],
    "variables": [
     {
@@ -1216,6 +1216,185 @@
      "floats": 1,
      "default": [
       3.0
+     ]
+    }
+   ]
+  },
+  {
+   "id": "base_weapon",
+   "label": "Weapon (masks for dirt, blood, overheat)",
+   "shader": "content/parent_materials/base_weapon",
+   "stream": "data/5a/5ad4748bc513c786",
+   "shader_streams": {
+    "129c2712a4fb8a69": "data/2a/2a8761118c7ca0e3",
+    "72bcce29defd03b9": "data/98/983a27c9aedc6f60"
+   },
+   "textures": [
+    "texture_map_1366b6ef",
+    "texture_map_c622bbff",
+    "base_aniso",
+    "base_bc",
+    "base_nm",
+    "base_orm",
+    "dirt_mask"
+   ],
+   "variables": [
+    {
+     "name": "blood_color",
+     "floats": 4,
+     "default": [
+      0.05,
+      0.004,
+      0.004,
+      0.0
+     ]
+    },
+    {
+     "name": "chip_dirt",
+     "floats": 2,
+     "default": [
+      0.5,
+      1.0
+     ]
+    },
+    {
+     "name": "mask_intensity",
+     "floats": 1,
+     "default": [
+      1.3
+     ]
+    },
+    {
+     "name": "mask_sharpness",
+     "floats": 1,
+     "default": [
+      3.0
+     ]
+    },
+    {
+     "name": "scroll_speed_u_mask",
+     "floats": 1,
+     "default": [
+      0.15
+     ]
+    },
+    {
+     "name": "scroll_speed_v_mask",
+     "floats": 1,
+     "default": [
+      -0.25
+     ]
+    },
+    {
+     "name": "scale_mask",
+     "floats": 1,
+     "default": [
+      1.0
+     ]
+    },
+    {
+     "name": "overheat",
+     "floats": 1,
+     "default": [
+      0.0
+     ]
+    }
+   ]
+  },
+  {
+   "id": "base_weapon_coated",
+   "label": "Weapon with coatings (the game's weapon skins recolour it)",
+   "shader": "content/parent_materials/base_weapon_coated",
+   "stream": "data/e7/e7f95d288b106154",
+   "shader_streams": {
+    "0480a6c66f02c1d9": "data/b3/b35f0518745ef999",
+    "90e608f9e1ead26a": "data/a9/a9d92ff7fab3b7f9"
+   },
+   "textures": [
+    "coat_pattern",
+    "color_gradient",
+    "overheat_mask",
+    "texture_map_7e189b14",
+    "base_aniso",
+    "base_bc",
+    "base_nm",
+    "base_orm",
+    "blood_mask",
+    "coat_bc",
+    "coat_mask",
+    "coat_nm",
+    "coat_orm",
+    "dirt_mask"
+   ],
+   "variables": [
+    {
+     "name": "blood_color",
+     "floats": 4,
+     "default": [
+      0.05,
+      0.004,
+      0.004,
+      0.0
+     ]
+    },
+    {
+     "name": "chip_dirt",
+     "floats": 2,
+     "default": [
+      0.471,
+      0.506
+     ]
+    },
+    {
+     "name": "mask_intensity",
+     "floats": 1,
+     "default": [
+      1.3
+     ]
+    },
+    {
+     "name": "mask_sharpness",
+     "floats": 1,
+     "default": [
+      3.0
+     ]
+    },
+    {
+     "name": "scroll_speed_u_mask",
+     "floats": 1,
+     "default": [
+      0.15
+     ]
+    },
+    {
+     "name": "scroll_speed_v_mask",
+     "floats": 1,
+     "default": [
+      -0.25
+     ]
+    },
+    {
+     "name": "tiling_rotation_offset",
+     "floats": 4,
+     "default": [
+      1.0,
+      1.0,
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "name": "scale_mask",
+     "floats": 1,
+     "default": [
+      1.0
+     ]
+    },
+    {
+     "name": "overheat",
+     "floats": 1,
+     "default": [
+      0.0
      ]
     }
    ]

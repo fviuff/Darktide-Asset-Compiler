@@ -98,10 +98,15 @@ struct CompileOptions {
     std::vector<StateMachineStateOption> state_machine_states;
     std::vector<StateMachineVariableOption> state_machine_variables;
     std::vector<StateMachineTransitionOption> state_machine_transitions;
+    // further events scripts may send to the machine (names or "#1234abcd" hashes)
+    std::vector<std::string> state_machine_declared_events;
     // Event that switches the unit from animation to ragdoll: its dynamic node bodies
     // are not created at spawn; a state-machine ragdoll state creates and releases them.
     std::string ragdoll_event;
     bool in_place = false; // remove root travel from clips (processing/root_motion.h)
+    bool root_motion = false; // move root travel onto the skeleton root (processing/root_motion.h)
+    // name of the package the asset is loaded with (build.json "package"); empty = Custom Assets names it
+    std::string package_name;
 };
 int compile(const CompileOptions& options);
 }

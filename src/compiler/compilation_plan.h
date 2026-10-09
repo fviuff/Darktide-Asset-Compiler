@@ -46,6 +46,7 @@ struct CompilationPlan {
     std::vector<stingray::DirectEventTransition> state_machine_transitions;
     std::vector<stingray::DirectEventVariable> state_machine_variables;
     std::vector<stingray::DirectEventSelector> state_machine_selectors;
+    std::vector<std::string> state_machine_declared_events;
     // Dangling bones or a ragdoll event without an authored state machine: emit a
     // state over a generated rest-pose clip so the machine has something to run.
     bool rest_state = false;
