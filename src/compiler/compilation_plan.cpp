@@ -362,12 +362,16 @@ CompilationPlan plan_compilation(const Scene& scene, const CompileOptions& optio
     plan.placeholder_unit = options.output_kind != OutputKind::Animations && scene.primitives.empty() &&
         scene.particle_effects.empty() &&
         (options.output_kind == OutputKind::Model || !plan.emit_animations);
-    plan.emit_unit = options.output_kind != OutputKind::Animations &&
-        (!scene.primitives.empty() || plan.placeholder_unit);
-    plan.emit_materials = plan.emit_unit && !plan.placeholder_unit &&
-        options.auto_materials && options.material_override.empty();
     const auto used = used_skin_indices(scene);
     const auto active = active_node_skin_indices(scene);
+    // an animated rig without meshes (a skeleton that only carries animation, e.g. to link other units to by
+    // node name) is a unit too when everything is asked for
+    const bool skeleton_unit = options.output_kind == OutputKind::All && scene.primitives.empty() &&
+        plan.emit_animations && used.empty() && active.size() == 1;
+    plan.emit_unit = options.output_kind != OutputKind::Animations &&
+        (!scene.primitives.empty() || plan.placeholder_unit || skeleton_unit);
+    plan.emit_materials = plan.emit_unit && !plan.placeholder_unit && !skeleton_unit &&
+        options.auto_materials && options.material_override.empty();
     if (!plan.placeholder_unit && plan.emit_unit && used.size() == 1) plan.skin_index = used.front();
     else if (plan.emit_animations && used.size() == 1) plan.skin_index = used.front();
     else if (used.empty() && active.size() == 1 && plan.emit_animations)

@@ -34,7 +34,7 @@ std::string hex_bytes(const std::uint8_t* data, std::size_t size) {
 }
 
 // ---------------------------------------------------------------------------------------------------------
-// Field layouts (dev notes: OPS.md, VIS.md). Ch = byte offset of a particle channel (0xffffffff = none),
+// Field layouts. Ch = byte offset of a particle channel (0xffffffff = none),
 // written as the channel's name; Vtx = byte offset into the visualizer's vertex, written as the vertex
 // channel's name. State and Self are filled in by the encoder (runtime scratch offset, own system index).
 enum class Kind { Ch, Vtx, U32, I32, F32, U8, Bool8, Bool32, Curve, Gradient, Vec3, Id32, Id64, Pad, Bytes, State, Self, Const };
@@ -158,7 +158,7 @@ const std::vector<OpSpec>& simulator_specs() {
 // simulators whose data the codec keeps as bytes (never used by the game; layouts only known from VT2)
 bool opaque_simulator(std::uint32_t op) { return op == 0x09 || op == 0x0a || op == 0x0b || op == 0x0f || op == 0x10 || op == 0x1b; }
 
-// vertex writers: u32 opcode + body (VIS.md)
+// vertex writers: u32 opcode + body
 const std::vector<OpSpec>& writer_specs() {
     static const std::vector<OpSpec> specs = {
         {"copy_vector3", {CH("source"), VX("destination")}},

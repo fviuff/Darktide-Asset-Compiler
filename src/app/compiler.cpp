@@ -142,7 +142,7 @@ bool write_manifest(const Scene& s,
     const auto& q = s.source_features;
     std::ofstream f(o.output_dir / manifest_filename);
     f << "{\n"
-      << "  \"source\": \"" << json_escape(o.input.string()) << "\",\n"
+      << "  \"source\": \"" << json_escape(o.input.filename().string()) << "\",\n"
       << "  \"status\": \"" << status << "\",\n"
       << "  \"requested_output\": \"" << output_kind_name(o.output_kind) << "\",\n"
       << "  \"requested_scene\": " << (o.scene_index ? std::to_string(*o.scene_index) : "null") << ",\n"
@@ -624,7 +624,6 @@ void cleanup_staging(const std::filesystem::path& staging) {
 
 int compile(const CompileOptions& requested_options) {
     CompileOptions options = requested_options;
-    const auto display_output_dir = options.output_dir;
 #ifdef _WIN32
     // Compiler outputs are written through both Win32-backed filesystem calls
     // and standard streams. Keep every output path in the extended namespace
@@ -905,10 +904,10 @@ int compile(const CompileOptions& requested_options) {
     }
 
     if (options.output_kind == OutputKind::Animations)
-        std::cout << "compiled " << plan.animation_indices.size() << " animation clip(s) -> " << display_output_dir.string() << "\n";
+        std::cout << "compiled " << plan.animation_indices.size() << " animation clip(s)\n";
     else if (emit_unit)
         std::cout << "compiled " << scene.primitives.size() << " primitive(s), " << verts << " vertices, " << tris
-                  << " triangles -> " << (display_output_dir / unit_path.filename()).string() << "\n";
+                  << " triangles -> " << unit_path.filename().string() << "\n";
     for (const auto& effect : scene.particle_effects)
         std::cout << "particle effect " << context.generated_key("particles", effect.name).name << "\n";
     if (options.validate && !report.empty()) std::cout << report << "\n";

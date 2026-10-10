@@ -25,7 +25,7 @@ from . import particle_effect, shader_preview
 # components the preview runs; anything else is reported as not previewed
 INITIALIZERS = {"zero", "random_float", "random_int", "float", "vector", "velocity_cone", "position_sphere",
                 "position_box", "position_cylinder", "zero_velocity", "copy", "velocity_box", "velocity_cylinder",
-                "tangent_box", "multiply_by_variable"}
+                "tangent_box", "normal_box", "multiply_by_variable"}
 SIMULATORS = {"age_age", "position_integrate", "position_integrate_scaled", "velocity_accelerate", "advance_frame",
               "integrate_float_scaled", "integrate_float", "plane_collision", "rate_spawn", "trail_spawn",
               "rate_emitter", "burst_emitter", "local_space", "copy_variable_to_float", "scale_float"}
@@ -189,6 +189,25 @@ class System:
             local = low + _rng.random((count, 3), dtype=np.float32) * (high - low)
             add = translation if kind == "position_box" else velocity if kind == "velocity_box" else 0
             target[rows, :3] = local @ rotation + add
+        elif kind == "normal_box":
+            # a random normal in the box; tangent = normal x (1,0,0) (or (0,0,1) for a mostly flat normal),
+            # binormal = normal x tangent, both turned by the system rotation
+            tangent_out, binormal_out = self.channel(item["tangent"]), self.channel(item["binormal"])
+            low, high = np.array(item["min"], dtype=np.float32), np.array(item["max"], dtype=np.float32)
+            normal = low + _rng.random((count, 3), dtype=np.float32) * (high - low)
+            length = np.linalg.norm(normal, axis=1)
+            normal = np.where(length[:, None] >= 1e-4, normal / np.maximum(length, 1e-4)[:, None], 0)
+            steep = np.abs(normal[:, 2]) >= 0.5
+            tangent = np.where(steep[:, None],
+                               np.stack([np.zeros(count, np.float32), normal[:, 2], -normal[:, 1]], 1),
+                               np.stack([-normal[:, 1], normal[:, 0], np.zeros(count, np.float32)], 1))
+            length = np.linalg.norm(tangent, axis=1)
+            tangent = np.where(length[:, None] >= 1e-4, tangent / np.maximum(length, 1e-4)[:, None], 0)
+            binormal = np.cross(normal, tangent)
+            if tangent_out is not None:
+                tangent_out[rows, :3] = tangent @ rotation
+            if binormal_out is not None:
+                binormal_out[rows, :3] = binormal @ rotation
         elif kind == "position_cylinder":
             target = self.channel(item["position"])
             if target is None:

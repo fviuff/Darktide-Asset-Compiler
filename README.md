@@ -64,6 +64,13 @@ The compiler reads the normal gltf style pbr setup: base color, metallic, roughn
 
 A single emission shader plugged straight into the output makes a cheap self lit material with no textures needed.
 
+Glowing materials (emission on a normal pbr material) can be dimmed and recoloured from your mod, the `true` at the end does it for linked units too:
+
+```lua
+Unit.set_scalar_for_materials(unit, "intensity", 2, true)
+Unit.set_vector3_for_materials(unit, "emissive_color", Vector3(0, 1, 0), true)
+```
+
 Faces only show from the front in game. For leaves, cloth, flat signs and other thin stuff tick "Double-sided" on the material, then the back gets added as extra triangles. Blender's own backface culling setting doesn't matter for this.
 
 Making a weapon or gear? Tick "Weapon or gear materials" in the asset panel. Your materials then use the game's weapon shaders, so level stuff like snow and dirt decals doesn't land on them, same as the game's own weapons. Leave it off for props that stand around in a level. (Alpha clip and see-through materials stay as they are.) Glow is toned down to the game's weapon level: emission strength 1 is a normal weapon glow, go higher for a brighter one (too high and it turns white).
@@ -316,6 +323,24 @@ A model rigged somewhere else has different bone names, different proportions an
 
 The model ends up with the darktide skeleton's proportions, since the game's animations drive those bones.
 
+Two ticks next to the fit button change how it gets there:
+- "Keep torso shape": the spine bones only get moved to their darktide spot, not stretched or tilted. Use it when the chest comes out creased or saggy.
+- "Keep proportions": the model gets scaled as a whole to fit best overall and every limb keeps its own shape (just bigger or smaller) instead of being stretched along the bone. Keeps a stocky model stocky.
+
+### Carry over an animation
+
+Fit only moves the model, its animation stays on the old (hidden) armature. "Carry Over Animation" (under the fit box) bakes it onto the darktide armature as a new action, every frame keyed. Leave "From" empty to take it from the armature you fitted, or pick any other armature that has the animation you want (another model, an animation only rig from mixamo and so on, auto-map reads its bones by itself).
+
+Every darktide bone gets turned the way its paired bone turns, corrected by the same amount the fit corrected the model, so the fitted model moves like the original did. The hips also move along their path (scaled like the model). Your extra bones (hair, skirt and so on) come along too when it's from the armature you fitted.
+
+Then compile like any animation: the action is a clip (simple animation, or loop it with the single clip state machine). Feet aren't pinned to the ground, so if the legs are a lot shorter or longer than the original the feet can slide or sink a bit.
+
+MMD dances: with mmd tools, select the MMD model's armature and file > import > MikuMikuDance Motion (.vmd), then fit the model like above and click Carry Over Animation. Read the motion's readme first, a lot of them don't allow uploading.
+
+### Skeleton only units
+
+A unit can also be just a skeleton with an animation, nothing to see, so a mod can link a model (or several) onto it by node name and have it move with that animation. Deselect everything and click New Asset from Selection (you get an empty asset), pick the preset, "Import Rest-Pose Reference Skeleton", Carry Over Animation from the armature with the animation, compile. Leave "Only weighted bones" off for this one, you want every bone in there.
+
 ### MMD models
 
 For MMD models (`.pmx`) get mmd tools (blender: edit > preferences > get extensions, search "mmd tools", install) and import with file > import > MikuMikuDance Model. Keep the textures where they came with the model (usually a folder next to the .pmx). Leave the import settings as they are. mmd tools makes a few extra objects (rigid bodies, joints), leave those out. Its materials can stay as they are too, the addon takes the texture from them when it compiles. Then it's the same steps as above: select the armature and the mesh, New Asset from Selection, pick human, Auto-map Bones, Fit to Darktide Skeleton, compile.
@@ -468,3 +493,7 @@ Stuff it can't quite do yet but that's being worked on:
 - A second uv map, and atlases that mix uv maps.
 - Previews in blender for dangle and jiggle bones, aiming bones, game shader materials on meshes, joint limits and springs, and lod distances. Ragdoll and bone-constraint states don't show in the state machine preview yet.
 - Particle preview: fog, shadows, the level's lighting, fading where particles meet walls, and mesh, light, ribbon and gpu visualizers.
+
+## Credits
+
+- QIangIQ

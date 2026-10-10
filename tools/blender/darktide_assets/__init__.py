@@ -18,6 +18,7 @@ from mathutils import Matrix, Vector
 from bpy.props import BoolProperty, CollectionProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, PointerProperty, StringProperty
 from .reference_skeleton import ReferenceSkeletonError, load_reference, _murmur64
 from . import fit_skeleton
+from . import retarget
 from .skeleton_presets import SKELETON_PRESET_LIST, SKELETON_PRESETS
 from . import game_unit
 from . import game_state_machine
@@ -356,6 +357,23 @@ class DarktideCollectionSettings(bpy.types.PropertyGroup):
     bone_map_index: IntProperty(default=0)
     reference_bone_names: CollectionProperty(type=fit_skeleton.DarktideReferenceBoneName)
     fit_report: StringProperty(name="Last fit report", default="")
+    animation_source: PointerProperty(
+        name="Animation from", type=bpy.types.Object, poll=lambda _self, obj: obj.type == "ARMATURE",
+        description="Armature whose current animation Carry Over Animation bakes onto the Darktide armature "
+                    "(empty = the rig the model was fitted from)",
+    )
+    fit_keep_torso: BoolProperty(
+        name="Keep torso shape",
+        description="The spine bones only move to their Darktide joints, without being stretched or tilted "
+                    "(stops chests creasing or sagging on rigs whose spine differs a lot)",
+        default=False,
+    )
+    fit_keep_proportions: BoolProperty(
+        name="Keep proportions",
+        description="Scale the model as a whole to the best average of all its bone lengths and scale each limb "
+                    "evenly instead of stretching it along the bone (keeps the model's own build)",
+        default=False,
+    )
     only_weighted_bones: BoolProperty(
         name="Only weighted bones (gear)",
         description="Export only bones carrying vertex weights plus their ancestors (a subset skeleton, like the game's own gear)",
@@ -1289,6 +1307,69 @@ def _has_constant_emission_output(material):
     return True
 
 
+_BONE_PATH = re.compile(r'pose\.bones\["((?:[^"\\]|\\.)*)"\]')
+
+
+def _hide_foreign_actions(objects):
+    """The glTF exporter adds every bone action in the file to a lone armature, also actions made for another rig
+    (an mmd tools model's dance, the rig an animation was carried over from). Those would come out as motionless
+    clips, so actions that move none of the exported bones go on the exporter's own skip list for this export.
+    Returns an undo function, or None when nothing needed hiding."""
+    bones = {bone.name for obj in objects if obj.type == "ARMATURE" for bone in obj.data.bones}
+    users = {}
+    for obj in bpy.data.objects:
+        data = obj.animation_data
+        if data is None:
+            continue
+        used = [data.action] + [strip.action for track in data.nla_tracks for strip in track.strips]
+        for action in used:
+            if action is not None:
+                users.setdefault(action, set()).add(obj)
+    exported = set(objects)
+    foreign = []
+    for action in bpy.data.actions:
+        if action in users and not users[action] & exported:
+            foreign.append(action)          # someone else's animation, e.g. the rig it was carried over from
+            continue
+        moved = set()
+        for layer in action.layers:
+            for strip in layer.strips:
+                for bag in strip.channelbags:
+                    for curve in bag.fcurves:
+                        match = _BONE_PATH.match(curve.data_path)
+                        if match:
+                            moved.add(match.group(1))
+        if moved and not moved & bones:
+            foreign.append(action)
+    if not foreign or not bpy.data.scenes:
+        return None
+    scene = bpy.data.scenes[0]                    # the exporter reads the list from the first scene
+    registered = not hasattr(bpy.types.Scene, "gltf_action_filter")
+    if registered:
+        import io_scene_gltf2
+        bpy.types.Scene.gltf_action_filter = bpy.props.CollectionProperty(type=io_scene_gltf2.GLTF2_filter_action)
+    added, changed = [], []
+    for action in foreign:
+        item = next((i for i in scene.gltf_action_filter if i.action == action), None)
+        if item is None:
+            item = scene.gltf_action_filter.add()
+            item.action = action
+            added.append(action)
+        elif item.keep:
+            changed.append(item)
+        item.keep = False
+
+    def undo():
+        for item in changed:
+            item.keep = True
+        for index in reversed(range(len(scene.gltf_action_filter))):
+            if scene.gltf_action_filter[index].action in added:
+                scene.gltf_action_filter.remove(index)
+        if registered:
+            del bpy.types.Scene.gltf_action_filter
+    return undo
+
+
 def _mmd_stand_in(material):
     """mmd tools materials draw through its own node group, which the glTF exporter can't read. For the export the
     material gets a Principled BSDF output with the same base texture and colour (cut-out textures alpha clipped,
@@ -1452,6 +1533,7 @@ def export_asset(context, path, donor_path_converter=None):
     changed_materials = []
     backface_culling = []
     stand_ins = []
+    hidden_actions = None
     changed_bones = []
     changed_bone_extras = []
     original_selection = [obj for obj in view_objects if obj.select_get()]
@@ -1617,6 +1699,7 @@ def export_asset(context, path, donor_path_converter=None):
         _set_if_supported(kwargs, operator, "export_tangents", True)
         _set_if_supported(kwargs, operator, "export_all_influences", True)
         _set_if_supported(kwargs, operator, "will_save_settings", False)
+        hidden_actions = _hide_foreign_actions(objects)
         result = operator(**kwargs)
         if result != {"FINISHED"}:
             raise RuntimeError("glTF export did not finish: " + repr(result))
@@ -1642,6 +1725,8 @@ def export_asset(context, path, donor_path_converter=None):
             material.use_backface_culling = culling
         for undo in stand_ins:
             undo()
+        if hidden_actions:
+            hidden_actions()
         for material, original, had_original in changed_materials:
             if not had_original:
                 material.pop(MATERIAL_SCHEMA_KEY, None)
@@ -2781,6 +2866,7 @@ class DARKTIDE_PT_skeleton(_SidebarPanel, bpy.types.Panel):
         layout.prop(options, "only_weighted_bones")
         layout.label(text="Imported armature is added to this asset collection")
         fit_skeleton.draw_fit_panel(layout, context, collection)
+        retarget.draw(layout, collection)
 
 
 class DARKTIDE_PT_game_unit(_SidebarPanel, bpy.types.Panel):
@@ -3064,7 +3150,7 @@ CLASSES = (DarktidePreferences, *fit_skeleton.CLASSES, *particle_effect.CLASSES,
            DARKTIDE_OT_make_collision_proxy, DARKTIDE_OT_export_intermediate, DARKTIDE_OT_new_flow,
            DARKTIDE_OT_inspect, DARKTIDE_OT_build, DARKTIDE_OT_import_reference_skeleton, DARKTIDE_OT_import_game_unit, DARKTIDE_OT_import_game_collision,
            DARKTIDE_OT_import_game_events, DARKTIDE_OT_clear_game_events,
-           *fit_skeleton.UI_CLASSES, *SIDEBAR_PANELS, DARKTIDE_PT_bone_dangle, DARKTIDE_PT_bone_aim)
+           *fit_skeleton.UI_CLASSES, *retarget.CLASSES, *SIDEBAR_PANELS, DARKTIDE_PT_bone_dangle, DARKTIDE_PT_bone_aim)
 
 
 def register():

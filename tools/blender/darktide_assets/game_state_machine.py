@@ -52,7 +52,7 @@ class _Reader:
 
 
 def _skip_state(r):
-    # mirrors the engine's state loader (dev/trials/sm-loader-re/smparse.py)
+    # mirrors the engine's state loader
     r.take(24 + 4)
     r.take(8 * r.count())                        # animations
     r.take(4 * r.count())                        # thresholds

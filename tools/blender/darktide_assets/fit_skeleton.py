@@ -6,6 +6,7 @@ with native bones plus grafted extra bones, and renames vertex groups. The ordin
 compiles the result against the preset's reference BONES.
 """
 
+import json
 import math
 import os
 import re
@@ -660,11 +661,26 @@ def _build_armature(context, collection, name, nodes, extras):
     return obj
 
 
-def fit_to_skeleton(context, collection, arm, rows):
-    """Fit the skinned meshes of `arm` onto the collection's reference skeleton.
+class FitPlan:
+    """How a source rig lands on the reference skeleton: a global similarity (rot0, scale0, trans0) and per mapped
+    bone a segment warp. The mesh fit and the animation retarget both use it, so animations move the fitted
+    meshes the way the source rig moved the originals."""
 
-    rows: {source bone: target bone}. Returns (new armature object, report lines)."""
-    identity = collection.dt_asset_identity
+    def __init__(self, **values):
+        self.__dict__.update(values)
+
+    def rotation(self, source_bone):
+        """World rotation the fit gives the geometry carried by this source bone (3x3)."""
+        warp = self.warps.get(self.carrier.get(source_bone))
+        return (warp[3] @ self.rot0) if warp else self.rot0.copy()
+
+    def place(self, point):
+        """A source world point under the global similarity (used for the hips' motion)."""
+        return self.rot0 @ (point * self.scale0) + self.trans0
+
+
+def fit_plan(identity, arm, rows):
+    """FitPlan for armature `arm` (rest pose) with rows {source bone: target bone}."""
     nodes = load_reference_nodes(identity)
     ref_pos = {n["name"]: Vector((n["world"][12], n["world"][13], n["world"][14])) for n in nodes}
     ref_root = next((n["name"] for n in nodes if not n["parent"]), nodes[0]["name"])
@@ -674,7 +690,7 @@ def fit_to_skeleton(context, collection, arm, rows):
     missing = missing_required(mapping.values())
     if missing:
         raise ValueError("Map these required bones first: " + ", ".join(missing))
-    report, warnings = [], []
+    warnings = []
 
     head_w = {b.name: arm.matrix_world @ b.head_local for b in bones}
     depth = {b.name: len(b.parent_recursive) for b in bones}
@@ -697,6 +713,23 @@ def fit_to_skeleton(context, collection, arm, rows):
     frame_t = Matrix((lat_t, up_t.cross(lat_t).normalized(), up_t)).transposed()
     rot0 = frame_t @ frame_s.transposed()
     scale0 = (ref_pos["j_head"] - ref_pos["j_hips"]).length / (head_s - hips_s).length
+    keep_proportions = identity.fit_keep_proportions
+    if keep_proportions:
+        # the scale that changes every mapped segment least: geometric mean of Darktide length / source length
+        logs = []
+        by_name = {b.name: b for b in bones}
+        for source, target in mapping.items():
+            p = by_name[source].parent
+            while p is not None and p.name not in mapping:
+                p = p.parent
+            if p is None:
+                continue
+            length_s = (head_w[source] - head_w[p.name]).length
+            length_t = (ref_pos[target] - ref_pos[mapping[p.name]]).length
+            if length_s > 1e-5 and length_t > 1e-5:
+                logs.append(math.log(length_t / length_s))
+        if logs:
+            scale0 = math.exp(sum(logs) / len(logs))
     trans0 = ref_pos["j_hips"] - rot0 @ (hips_s * scale0)
     similarity = rot0 * scale0
     q = {name: rot0 @ (p * scale0) + trans0 for name, p in head_w.items()}
@@ -726,15 +759,33 @@ def fit_to_skeleton(context, collection, arm, rows):
                 stack.extend(kids[k])
         return found
 
+    ref_parent = {n["name"]: n["parent"] for n in nodes}
+    targets = set(mapping.values())
+
+    def ref_incoming(target):
+        """Direction the Darktide skeleton comes into this bone from its mapped parent (up for the hips)."""
+        p = ref_parent.get(target)
+        while p and p not in targets:
+            p = ref_parent.get(p)
+        return _unit(ref_pos[target] - ref_pos[p]) if p else up_t
+
     warps = {}
     clamped = 0
     for name, target in mapping.items():
         src, dst = q[name], ref_pos[target]
         axis, along, desired = None, 1.0, None
         candidates = [c for c in mapped_below(name) if mapping[c] != target]
-        candidates.sort(key=lambda c: ((q[c] - src).length, c), reverse=True)
+        # line up with the child that carries on the Darktide skeleton's own direction (hips -> spine, hand ->
+        # middle finger, chest -> neck); the farthest child tilted pelvises toward a thigh and chests toward a
+        # shoulder, and the source bones' own directions are unreliable after imports
+        incoming = ref_incoming(target)
+        candidates.sort(key=lambda c: (_unit(ref_pos[mapping[c]] - dst).dot(incoming), (q[c] - src).length),
+                        reverse=True)
         other = next((c for c in candidates
                       if (q[c] - src).length > 1e-5 and (ref_pos[mapping[c]] - dst).length > 1e-5), None)
+        if identity.fit_keep_torso and target in ("j_spine", "j_spine1", "j_spine2"):
+            warps[name] = (src, dst, Vector((0, 0, 1)), Matrix.Identity(3), 1.0)
+            continue
         if other:
             axis = _unit(q[other] - src)
             desired = _unit(ref_pos[mapping[other]] - dst)
@@ -753,6 +804,27 @@ def fit_to_skeleton(context, collection, arm, rows):
         warps[name] = (src, dst, axis, rot, along)
     if clamped:
         warnings.append("%d segments needed more than the 0.7-1.4 length scale; proportions differ strongly." % clamped)
+    carrier = {b.name: b.name if b.name in mapping else mapped_parent(b.name) for b in bones}
+    return FitPlan(nodes=nodes, ref_pos=ref_pos, ref_root=ref_root, bones=bones, bone_names=bone_names,
+                   mapping=mapping, head_w=head_w, depth=depth, src_of=src_of, rot0=rot0, scale0=scale0,
+                   trans0=trans0, similarity=similarity, keep_proportions=keep_proportions, warps=warps,
+                   carrier=carrier, mapped_parent=mapped_parent, warnings=warnings)
+
+
+def fit_to_skeleton(context, collection, arm, rows):
+    """Fit the skinned meshes of `arm` onto the collection's reference skeleton.
+
+    rows: {source bone: target bone}. Returns (new armature object, report lines)."""
+    identity = collection.dt_asset_identity
+    plan_ = fit_plan(identity, arm, rows)
+    nodes, ref_pos, ref_root = plan_.nodes, plan_.ref_pos, plan_.ref_root
+    bones, bone_names = plan_.bones, plan_.bone_names
+    parent = {b.name: (b.parent.name if b.parent else None) for b in bones}
+    mapping, head_w, depth, src_of = plan_.mapping, plan_.head_w, plan_.depth, plan_.src_of
+    rot0, scale0, trans0, similarity = plan_.rot0, plan_.scale0, plan_.trans0, plan_.similarity
+    keep_proportions, warps, carrier = plan_.keep_proportions, plan_.warps, plan_.carrier
+    mapped_parent, warnings = plan_.mapped_parent, plan_.warnings
+    report = []
 
     # Affine per bone in source world space: point' = A p + b; normals use Rn.
     def affine(warp):
@@ -761,17 +833,17 @@ def fit_to_skeleton(context, collection, arm, rows):
         origin, dst, axis, rot, along = warp
         stretch = Matrix.Identity(3)
         normal_stretch = Matrix.Identity(3)
-        for r in range(3):
-            for c in range(3):
-                stretch[r][c] += (along - 1.0) * axis[r] * axis[c]
-                normal_stretch[r][c] += (1.0 / along - 1.0) * axis[r] * axis[c]
+        if keep_proportions:
+            stretch = stretch * along         # the segment keeps its shape, only its size changes
+        else:
+            for r in range(3):
+                for c in range(3):
+                    stretch[r][c] += (along - 1.0) * axis[r] * axis[c]
+                    normal_stretch[r][c] += (1.0 / along - 1.0) * axis[r] * axis[c]
         a = rot @ stretch
         return a @ similarity, dst + a @ (trans0 - origin), (rot @ normal_stretch) @ rot0
 
-    carrier = {}
-    for b in bones:
-        carrier[b.name] = b.name if b.name in mapping else mapped_parent(b.name)
-    mats = {name: affine(warp) for name, warp in warps.items()}
+    mats ={name: affine(warp) for name, warp in warps.items()}
     mats[None] = affine(None)
 
     # 3. Output names: mapped -> target, unmapped -> sanitized unique extras.
@@ -929,6 +1001,9 @@ def fit_to_skeleton(context, collection, arm, rows):
     new_arm = _build_armature(context, collection, new_arm_name, nodes, extras)
     new_arm["darktide_reference_unit"] = bpy.path.abspath(identity.reference_unit)
     new_arm["darktide_reference_bones"] = bpy.path.abspath(identity.reference_bones)
+    # what each bone was in the source rig, so its animation can be carried over later
+    new_arm["darktide_fit_source"] = arm.name
+    new_arm["darktide_fit_bones"] = json.dumps({new: old for old, new in new_name.items()})
     for obj, _world, _rigid in plan:
         obj.parent = None
         obj.matrix_parent_inverse = Matrix.Identity(4)
@@ -953,7 +1028,7 @@ def fit_to_skeleton(context, collection, arm, rows):
     if skipped:
         warnings.append("Meshes not tied to the source armature were left alone: " + ", ".join(skipped[:4]))
     if arm.animation_data and arm.animation_data.action:
-        warnings.append("Source animation was not carried over; retarget animation separately")
+        warnings.append("The source rig's animation stays on it; Carry Over Animation bakes it onto this one")
     report.extend("WARNING: " + w for w in warnings)
     return new_arm, report
 
@@ -1047,6 +1122,9 @@ def draw_fit_panel(layout, context, collection):
         for name in missing_required(mapped):
             box.label(text="Unmapped required bone: " + name, icon="ERROR")
         box.label(text="%d of %d bones mapped; others are grafted as extras" % (len(mapped), len(identity.bone_map)))
+        row = box.row()
+        row.prop(identity, "fit_keep_torso")
+        row.prop(identity, "fit_keep_proportions")
         box.operator(DARKTIDE_OT_fit_to_skeleton.bl_idname, icon="ARMATURE_DATA")
     for line in identity.fit_report.splitlines()[:8]:
         box.label(text=line[:90], icon="ERROR" if line.startswith("WARNING") else "INFO")

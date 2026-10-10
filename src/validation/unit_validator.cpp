@@ -545,10 +545,14 @@ bool validate_unit_v115(const std::filesystem::path& path, std::string& report,
         const bool valid_node_ref = node_ref == renderer_ref && mesh_name == scene_names[renderer_ref];
         if (!valid_node_ref || geometry_ref != expected_ref ||
             skinned != geometries[i].skinned || !valid_skin_ref ||
-            ((render_flags & ~0x8u) != 0x000c2003u && (render_flags & ~0x8u) != 0x000c2001u &&
-             (render_flags & ~0x8u) != 0x00002002u) ||
+            // 0x8 drawn by a LOD, 0x4 culling disabled (earlier builds set it on every mesh)
+            ((render_flags & ~0xCu) != 0x000c2003u && (render_flags & ~0xCu) != 0x000c2001u &&
+             (render_flags & ~0xCu) != 0x00002002u) ||
             kind != 3 || enabled != 1) {
-            report = "invalid: MeshObject is not a packed static or skinned mesh this compiler writes";
+            char detail[160];
+            std::snprintf(detail, sizeof detail, " (mesh %u: node %u, geometry %u, skin %u, render flags 0x%x, kind %u, enabled %u)",
+                          i, node_ref, geometry_ref, skin_ref, render_flags, kind, enabled);
+            report = std::string("invalid: MeshObject is not a packed static or skinned mesh this compiler writes") + detail;
             return false;
         }
         float bounds[10]{};

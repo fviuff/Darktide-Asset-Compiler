@@ -2,8 +2,8 @@
 asset's unit as its body, its own name, health, speeds and hit zones. Written as a Lua file next to the compiled
 asset; a mod loads it once and can then spawn the breed by name.
 
-breeds.json lists the game's minion breeds (dev/trials/enemy-trial/breed_table.py reads them from the game Lua):
-base unit, walk/run speed, hit zones and health per difficulty.
+breeds.json lists the game's minion breeds as the game's Lua defines them: base unit, walk/run speed, hit zones
+and health per difficulty.
 """
 import json
 import os

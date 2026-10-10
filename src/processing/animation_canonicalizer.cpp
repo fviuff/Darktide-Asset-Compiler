@@ -253,6 +253,25 @@ void synthesize_animation_only_skin(Scene& scene, AnimationCanonicalizationRepor
     if (!scene.primitives.empty() || scene.animations.empty() || !active_skin_indices(scene).empty() ||
         scene.nodes.empty()) return;
     constexpr std::size_t palette_limit = 4096u;
+    // A rig without meshes (an animation-only skeleton) still has its authored skin, just attached to no mesh.
+    // When it holds every animated node it is the palette: its joints, not their scene ancestors (the
+    // armature object) become the bones.
+    for (std::size_t skin_index = 0; skin_index < scene.skins.size(); ++skin_index) {
+        const auto& joints = scene.skins[skin_index].joints;
+        if (joints.empty() || joints.size() > palette_limit) continue;
+        const std::set<int> joint_set(joints.begin(), joints.end());
+        bool covers = true;
+        for (const auto& animation : scene.animations)
+            for (const auto& track : animation.tracks) covers = covers && joint_set.count(track.target_node) != 0;
+        if (!covers) continue;
+        const int attachment = scene.scene_roots.empty() ? joints.front() : scene.scene_roots.front();
+        if (scene.scene_roots.empty()) scene.scene_roots.push_back(attachment);
+        scene.nodes[static_cast<std::size_t>(attachment)].skin = static_cast<int>(skin_index);
+        note(scene, report, 0, "animation_only_authored_skin",
+             "the rig's own skin (no mesh uses it) holds every animated node and became the BONES palette", false);
+        synthesize_empty_clips(scene, report, joints.front());
+        return;
+    }
     SkinInfo skin;
     skin.name = "__canonical_animation_only_skin";
     std::set<int> retained;

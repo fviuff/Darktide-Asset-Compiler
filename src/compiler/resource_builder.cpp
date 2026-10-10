@@ -50,6 +50,12 @@ bool apply_reference_bones(const Scene& source, std::size_t skin_index,
     const auto source_names = canonical_bone_names(source_skin);
     if (source_skin.joint_names.size() != source_skin.joints.size() || source_names != source_skin.joint_names) {
         error = "reference BONES requires complete, unique source joint names that are already valid native bone identities";
+        for (std::size_t i = 0; i < source_names.size(); ++i)
+            if (i >= source_skin.joint_names.size() || source_names[i] != source_skin.joint_names[i]) {
+                error += " (\"" + (i < source_skin.joint_names.size() ? source_skin.joint_names[i] : std::string()) +
+                         "\" would have to be \"" + source_names[i] + "\")";
+                break;
+            }
         return false;
     }
     std::vector<std::uint32_t> source_to_reference;
@@ -145,6 +151,35 @@ Scene with_placeholder_geometry(const Scene& source) {
     return lowered;
 }
 
+// A skeleton that only carries animation: the UNIT writer builds BONES, nodes and the simple animation from the
+// skinned meshes, so the rig gets one zero-area triangle on its root bone (never drawn) to carry its skin.
+Scene with_skeleton_carrier(const Scene& source, std::size_t skin_index) {
+    Scene lowered = source;
+    const auto& skin = source.skins[skin_index];
+    int owner = -1;
+    for (std::size_t i = 0; i < source.nodes.size() && owner < 0; ++i)
+        if (source.nodes[i].skin == static_cast<int>(skin_index)) owner = static_cast<int>(i);
+    const auto& root = source.nodes[static_cast<std::size_t>(skin.joints.front())].world_stingray;
+    const float x = root[12], y = root[13], z = root[14];
+    Primitive primitive;
+    primitive.name = "__skeleton_carrier__";
+    primitive.material_name = "__no_material__";
+    primitive.source_node = owner;
+    primitive.mode = 4;
+    primitive.indices = {0, 1, 2};
+    primitive.channels = {
+        {VertexChannel::Semantic::Position, 0, 3, {x,y,z, x,y,z, x,y,z}},
+        {VertexChannel::Semantic::Normal, 0, 3, {0,0,1, 0,0,1, 0,0,1}},
+        {VertexChannel::Semantic::Tangent, 0, 4, {1,0,0,1, 1,0,0,1, 1,0,0,1}},
+        {VertexChannel::Semantic::Texcoord, 0, 2, {0,0, 0,0, 0,0}},
+        {VertexChannel::Semantic::BlendIndices, 0, 4, {0,0,0,0, 0,0,0,0, 0,0,0,0}},
+        {VertexChannel::Semantic::BlendWeights, 0, 4, {1,0,0,0, 1,0,0,0, 1,0,0,0}},
+    };
+    primitive.source_channels = primitive.channels;
+    lowered.primitives.push_back(std::move(primitive));
+    return lowered;
+}
+
 void set_feature_status(std::vector<std::string>& statuses, const std::string& feature,
                         const std::string& value) {
     for (std::size_t i = 0; i + 1 < statuses.size(); i += 2) {
@@ -183,8 +218,10 @@ bool build_glb_resources(const Scene& source, const app::CompileOptions& options
             options.reference_bones_file ? "external_reference" : "emitted");
     }
     if (plan.emit_unit) {
-        const Scene placeholder = plan.placeholder_unit ? with_placeholder_geometry(*emitted_source) : Scene{};
-        const Scene& unit_scene = plan.placeholder_unit ? placeholder : *emitted_source;
+        const bool skeleton_unit = !plan.placeholder_unit && emitted_source->primitives.empty() && selected != no_skin;
+        const Scene placeholder = plan.placeholder_unit ? with_placeholder_geometry(*emitted_source) :
+            skeleton_unit ? with_skeleton_carrier(*emitted_source, selected) : Scene{};
+        const Scene& unit_scene = plan.placeholder_unit || skeleton_unit ? placeholder : *emitted_source;
         const auto unit_key = context.generated_key("unit", base);
         stingray::unit::WriteOptions unit_options;
         unit_options.resource_name = unit_key.name;
